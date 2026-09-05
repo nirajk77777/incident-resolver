@@ -203,7 +203,7 @@ Seven working days are available: six for the phases above, one held as buffer. 
 - `@langchain/community` for `PGVectorStore`, `@langchain/cohere` for `CohereEmbeddings` and `CohereRerank`
 - `fastify`, `drizzle-orm`, `pg`, `pino`, `execa`, `zod`
 - `react`, `vite`, `tailwindcss`
-- OTel: `@opentelemetry/sdk-node`, `@opentelemetry/auto-instrumentations-node`, `@opentelemetry/exporter-trace-otlp-http`, `@opentelemetry/exporter-metrics-otlp-http`, `@opentelemetry/exporter-logs-otlp-http`, `@opentelemetry/api-logs`, `pino-opentelemetry-transport`
+- OTel: `@opentelemetry/sdk-node`, `@opentelemetry/auto-instrumentations-node` (its pino instrumentation bridges pino to the OTel logs API, so `pino-opentelemetry-transport` is not needed), `@fastify/otel` (the contrib fastify instrumentation is no longer in the auto bundle), `@opentelemetry/exporter-trace-otlp-http`, `@opentelemetry/exporter-metrics-otlp-http`, `@opentelemetry/exporter-logs-otlp-http`, `@opentelemetry/api-logs`
 - Langfuse v5: `@langfuse/otel`, `@langfuse/tracing`, `@langfuse/langchain`, `@langfuse/client`
 
 Versions verified on 2026-09-05: `deepagents` 1.13, `@langchain/cohere` 1.1, `@langfuse/client` 5.11. GitHub MCP remote endpoint is `https://api.githubcopilot.com/mcp/` with a PAT as a bearer token, and its `repos` and `pull_requests` toolsets carry `create_branch`, `push_files`, and `create_pull_request`.

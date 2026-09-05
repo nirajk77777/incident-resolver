@@ -54,7 +54,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (http_route) (rate(http_server_request_duration_seconds_count{job=\"shoplite-api\"}[1m]))",
+          "expr": "sum by (http_route) (label_replace(rate(http_server_request_duration_seconds_count{job=\"shoplite-api\"}[1m]), \"http_route\", \"(unrouted)\", \"http_route\", \"^$\"))",
           "legendFormat": "{{http_route}}",
           "refId": "A",
           "range": true
@@ -79,7 +79,7 @@
           "mode": "multi"
         }
       },
-      "description": "Requests per second per Fastify route, from the OTel http.server.request.duration histogram."
+      "description": "Requests per second per Fastify route, from the OTel http.server.request.duration histogram. Requests that matched no route (404s, /health) are grouped as (unrouted)."
     },
     {
       "id": 3,
@@ -101,20 +101,10 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (http_route) (rate(http_server_request_duration_seconds_count{job=\"shoplite-api\", http_response_status_code=~\"5..\"}[1m])) / sum by (http_route) (rate(http_server_request_duration_seconds_count{job=\"shoplite-api\"}[1m]))",
-          "legendFormat": "5xx {{http_route}}",
           "refId": "A",
-          "range": true
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum by (http_route) (rate(http_server_request_duration_seconds_count{job=\"shoplite-api\", http_response_status_code=~\"4..|5..\"}[1m])) / sum by (http_route) (rate(http_server_request_duration_seconds_count{job=\"shoplite-api\"}[1m]))",
-          "legendFormat": "4xx+5xx {{http_route}}",
-          "refId": "B",
-          "range": true
+          "range": true,
+          "legendFormat": "{{http_route}}",
+          "expr": "(sum by (http_route) (label_replace(rate(http_server_request_duration_seconds_count{job=\"shoplite-api\", http_response_status_code=~\"5..\"}[1m]), \"http_route\", \"(unrouted)\", \"http_route\", \"^$\")) / sum by (http_route) (label_replace(rate(http_server_request_duration_seconds_count{job=\"shoplite-api\"}[1m]), \"http_route\", \"(unrouted)\", \"http_route\", \"^$\"))) or (sum by (http_route) (label_replace(rate(http_server_request_duration_seconds_count{job=\"shoplite-api\"}[1m]), \"http_route\", \"(unrouted)\", \"http_route\", \"^$\")) * 0)"
         }
       ],
       "fieldConfig": {
@@ -123,7 +113,9 @@
             "lineWidth": 2,
             "fillOpacity": 10
           },
-          "unit": "percentunit"
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
         },
         "overrides": []
       },
@@ -136,7 +128,7 @@
           "mode": "multi"
         }
       },
-      "description": "Share of responses per route that were server errors (5xx) and that were any error (4xx or 5xx). Sentinel watches the same ratio."
+      "description": "Share of responses per route that were server errors (5xx). Routes with traffic and no errors read 0. Client outcomes such as declined cards (402) and empty carts (400) are not errors here; see the Checkout row. Sentinel watches this same ratio."
     },
     {
       "id": 4,
