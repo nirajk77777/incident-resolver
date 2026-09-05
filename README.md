@@ -21,8 +21,9 @@ Copy `.env.example` to `.env` to override any model name, threshold, or URL. Eve
 ## Layout
 
 ```
-apps/        portal-api, portal-web, sentinel (added by later issues)
-packages/    shared (config, db client, migrations), agents, mcp-* servers
+apps/            portal-api, portal-web, sentinel (added by later issues)
+packages/        shared (config, db client, migrations), agents, mcp-* servers
+infra/grafana/   dashboards provisioned into the LGTM container's Grafana
 ```
 
 Tests ending in `.integration.test.ts` need Docker; everything else runs without it.
@@ -30,3 +31,5 @@ Tests ending in `.integration.test.ts` need Docker; everything else runs without
 ## ShopLite
 
 The product the agent investigates lives in its own repository, [nirajk77777/shoplite](https://github.com/nirajk77777/shoplite), per [ADR-0001](docs/adr/0001-shoplite-in-a-separate-repository.md). It has no compose file: it reads `DATABASE_URL` and `OTEL_EXPORTER_OTLP_ENDPOINT` from env and uses the Postgres and LGTM containers started here, owning the `shoplite` schema. Clone it next to this repo, then in it run `pnpm install`, `pnpm db:migrate`, `pnpm db:seed`, and `pnpm dev` for the API on port 4000. Its README documents the routes, test cards, and a curl checkout.
+
+ShopLite sends traces, logs, and metrics to the LGTM container. The **ShopLite** Grafana dashboard at [localhost:3000/d/shoplite](http://localhost:3000/d/shoplite) shows request rate, error rate by route, p95 latency, the checkout counters, and warn-level logs with clickable trace ids. It is provisioned from `infra/grafana/` through bind mounts in `docker-compose.yml`, so edits to the JSON appear after about ten seconds without restarting.

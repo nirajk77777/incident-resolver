@@ -27,4 +27,24 @@ describe("Grafana LGTM container", () => {
     });
     expect(response.status).toBe(200);
   });
+
+  it("provisions the ShopLite dashboard from infra/grafana", async () => {
+    const response = await fetch(`${infra.grafanaUrl}/api/dashboards/uid/shoplite`);
+    expect(response.status).toBe(200);
+
+    const { dashboard } = (await response.json()) as {
+      dashboard: { title: string; panels: Array<{ title: string; type: string }> };
+    };
+    expect(dashboard.title).toBe("ShopLite");
+    const titles = dashboard.panels.filter((p) => p.type !== "row").map((p) => p.title);
+    expect(titles).toEqual(
+      expect.arrayContaining([
+        "Request rate by route",
+        "Error rate by route",
+        "Checkout attempts",
+        "Failed checkouts by reason",
+        "Discounts applied by code",
+      ]),
+    );
+  });
 });

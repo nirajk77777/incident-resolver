@@ -30,6 +30,10 @@ services:
       - lgtm-grafana:/data/grafana
       - lgtm-prometheus:/data/prometheus
       - lgtm-loki:/data/loki
+      # Grafana dashboards, provisioned from this repo. The provider YAML sits next to the
+      # image's own providers; the JSON directory is where that provider points.
+      - ./infra/grafana/provisioning/dashboards/shoplite.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/shoplite.yaml:ro
+      - ./infra/grafana/dashboards:/otel-lgtm/grafana/dashboards/shoplite:ro
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:3000/api/health && curl -sf http://localhost:3100/ready"]
       interval: 10s

@@ -1,0 +1,13 @@
+# Mounted into the grafana/otel-lgtm container next to its own providers.
+# Grafana loads every YAML in conf/provisioning/dashboards.
+apiVersion: 1
+
+providers:
+  - name: ShopLite
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /otel-lgtm/grafana/dashboards/shoplite
+      foldersFromFilesStructure: false
