@@ -1,0 +1,3 @@
+# The code agent has no shell
+
+Deep Agents can give the code agent an `execute` tool with arbitrary shell inside the Workspace. We deliberately do not. The code agent gets file tools confined to the Workspace and a fixed set of named tools: `run_tests` and `git_diff_names`, with `run_typecheck` as the next addition if needed. The planted bugs and the test suite are designed so this is enough. The trade-off is less flexibility for unanticipated repairs, in exchange for a hard guarantee that the agent can only run commands we wrote, which is the answer we want to give when asked what an agent with code access can do. If a future need looks like "it needs a shell", the answer is another named tool.

@@ -1,0 +1,3 @@
+# ShopLite lives in a separate repository
+
+The agent opens fix pull requests against the product it investigates. If ShopLite lived inside this monorepo, every PR would target the same repository as the agent, the portal, and the MCP servers, and the diff would sit next to unrelated infrastructure. We keep ShopLite in its own repository so a fix PR contains only product code, the Workspace clone is small, and the GitHub MCP server's token can be scoped to one repository. The cost is two repositories to set up and a shared Postgres and OTLP endpoint that this repository's compose file provides and ShopLite consumes through environment variables.
