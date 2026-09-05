@@ -1,0 +1,44 @@
+name: incident-resolver
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.6-pg16
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: incident_resolver
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d incident_resolver"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  lgtm:
+    image: grafana/otel-lgtm:0.32.1
+    ports:
+      - "4317:4317" # OTLP gRPC
+      - "4318:4318" # OTLP HTTP
+      - "3000:3000" # Grafana
+      - "3100:3100" # Loki. Not published by the image by default; mapped so mcp-observability can query it
+      - "3200:3200" # Tempo
+      - "9090:9090" # Prometheus
+    volumes:
+      - lgtm-grafana:/data/grafana
+      - lgtm-prometheus:/data/prometheus
+      - lgtm-loki:/data/loki
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:3000/api/health && curl -sf http://localhost:3100/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+volumes:
+  pgdata:
+  lgtm-grafana:
+  lgtm-prometheus:
+  lgtm-loki:

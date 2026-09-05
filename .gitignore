@@ -1,0 +1,14 @@
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+
+# per-Ticket ShopLite clones made by portal-api
+workspaces/
+
+# scratch notes, never committed
+item.md

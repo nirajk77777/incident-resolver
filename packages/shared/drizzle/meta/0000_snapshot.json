@@ -1,0 +1,22 @@
+{
+  "id": "ae97b029-f4f8-450a-ae9c-b6f013212d49",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {},
+  "enums": {},
+  "schemas": {
+    "knowledge": "knowledge",
+    "portal": "portal",
+    "shoplite": "shoplite"
+  },
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}
