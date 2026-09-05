@@ -26,3 +26,7 @@ packages/    shared (config, db client, migrations), agents, mcp-* servers
 ```
 
 Tests ending in `.integration.test.ts` need Docker; everything else runs without it.
+
+## ShopLite
+
+The product the agent investigates lives in its own repository, [nirajk77777/shoplite](https://github.com/nirajk77777/shoplite), per [ADR-0001](docs/adr/0001-shoplite-in-a-separate-repository.md). It has no compose file: it reads `DATABASE_URL` and `OTEL_EXPORTER_OTLP_ENDPOINT` from env and uses the Postgres and LGTM containers started here, owning the `shoplite` schema. Clone it next to this repo, then in it run `pnpm install`, `pnpm db:migrate`, `pnpm db:seed`, and `pnpm dev` for the API on port 4000. Its README documents the routes, test cards, and a curl checkout.
