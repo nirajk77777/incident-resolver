@@ -46,6 +46,8 @@ ShopLite sends traces, logs, and metrics to the LGTM container. The **ShopLite**
 | `GET /tickets` | The queue, newest first. |
 | `GET /tickets/:id` | One Ticket with its status, Category, Confidence, Outcome, Reply, and root cause. |
 | `GET /tickets/:id/events` | The live timeline as SSE. |
+| `GET /tickets/:id/approvals` | Every Proposal this Ticket has raised, newest first, with what the Reviewer decided and what running it did. |
+| `POST /tickets/:id/decision` | The Reviewer's Decision on the Proposal the Ticket is waiting on: `{"decision":"approve"}`, `{"decision":"edit","proposal":{…}}`, or `{"decision":"reject","reason":"…"}`. 202 once recorded; the run carries on in the background. A Decision the action does not allow is a 400, and a second one on the same Proposal is a 409. |
 | `GET /reporters/:email/tickets` | What the storefront's "My tickets" page reads: one Reporter's Tickets and Replies. |
 | `GET /config` | What portal-web needs from the portal's configuration: the Resolver in use, and the Grafana and Langfuse base URLs its trace links are built from. |
 | `GET /health` | Liveness, and which Resolver is selected. |
@@ -53,6 +55,16 @@ ShopLite sends traces, logs, and metrics to the LGTM container. The **ShopLite**
 A Ticket moves `new` → `triaging` → `investigating` → `awaiting_approval` → `acting` → `closed`, and `closed` always carries exactly one Outcome and one Reply, which a check constraint on the table enforces. The lifecycle is derived in the portal from the Resolver's stream, never inside the agent. A run that fails or times out (`RUN_TIMEOUT_MS`) closes the Ticket as `escalated` with the holding Reply rather than leaving it stuck.
 
 Each entry of the timeline is a `portal.ticket_events` row, written as the run streams and published to every open SSE connection. Frames are unnamed, so `new EventSource(url).onmessage` receives the whole timeline and reads the kind of entry off `type` in the data: `subagent_start`, `subagent_end`, `tool_call`, `tool_result`, `message`, `interrupt`, `decision`, `verdict`, or the portal's own `status`. The frame id is the entry's sequence, so a reloaded page sends `Last-Event-ID` (or `?lastEventId=`) and gets exactly what it missed before the stream goes live. Entries carry the run number, counting re-runs of a Ticket from 1. Tickets run concurrently, one independent run each.
+
+### The approval gate
+
+Every write the agent can make stops for a human first (PLAN.md section 5). The Resolver's own tools are the writes — `apply_data_fix` and `send_customer_reply`, with `create_pull_request` configured and arriving with the Fix Shipper — and Deep Agents' `interruptOn` raises a LangGraph interrupt before any of them runs. [ADR-0003](docs/adr/0003-the-resolver-owns-every-write.md) records why the gate is on the Resolver's tools rather than on the Data Investigator's `propose_data_fix`.
+
+When a run stops, the portal writes a `portal.approvals` row with the Proposal and, for a data fix, the rows it would touch as they are now, puts an `interrupt` entry on the timeline, and moves the Ticket to `awaiting_approval`. `POST /tickets/:id/decision` records the Decision, writes a `decision` entry, and resumes the same LangGraph thread: an edit reaches the agent as the arguments of the call it was interrupted on, so the tool runs on the Reviewer's wording, and a rejection reaches it as a reason it reads before deciding what to do instead. A Reply a Reviewer approved is what the Ticket closes with, even if the Resolver then worded its Verdict differently.
+
+An approved data fix is the only write in the system that touches ShopLite data. It runs as `shoplite_writer`, a role created by migration 0007 with `UPDATE` and `DELETE` on the `shoplite` schema and nothing else — no `INSERT`, no DDL, no other schema — from `SHOPLITE_WRITE_DATABASE_URL`. The statement is parsed and must be one `UPDATE` or `DELETE` with a `WHERE` clause on a ShopLite table; inside one transaction the rows it matches are snapshotted onto the approval and counted against `DATA_FIX_ROW_CAP`, and anything over the cap or any failure rolls the whole thing back. A Ticket cannot close `data_fixed` unless an approved fix actually changed rows.
+
+Each Decision goes back onto the run's Langfuse trace as a score (`approved`, `edited`, `rejected`), and each Outcome as `resolved` or `escalated` at close, which turns the gate into an evaluation dataset. Without the Langfuse keys nothing is scored, exactly as nothing is traced.
 
 `RESOLVER` chooses what investigates a Ticket, through one `TicketResolver` seam that nothing downstream can see past.
 
@@ -73,6 +85,7 @@ pnpm --filter @incident-resolver/portal-web dev     # portal-web on 5001
 `pnpm dev` starts both, along with every other package that has a dev script.
 
 - **Queue** (`/tickets`): every Ticket newest first, with its status, Source, Category, Outcome and Confidence. It re-reads itself every few seconds, so a Ticket filed elsewhere appears without a reload.
+- **Approval card**: when a run stops for a Decision, the card is the loudest thing on the Ticket. A data fix shows its reason, the statement in an editable textarea, and a table of the rows it would change as they are now; a Reply shows its wording in an editable textarea; a pull request shows its branch, files and body, and is approve or reject only. Approving after an edit sends the Reviewer's version. What was already decided, and what running it did, stays on the Ticket beside the Resolution.
 - **Ticket** (`/tickets/:id`): the live Timeline, as a transcript. One rail down the left with the elapsed offset in the gutter and a marker per entry: subagent start and end, tool call and result, message, interrupt, Decision, Verdict, and the portal's own status moves as rules across the rail. Payloads are collapsed by default and Evidence is set in monospace; the Verdict card carries the Reply. The panel beside it fills in with the Outcome, Confidence, root cause, Reply and Evidence as the run reaches them.
 - **File a ticket** (`/tickets/new`): a summary, what went wrong, optional steps to reproduce, and an optional ShopLite trace id. Filing it starts the run and opens its Timeline.
 - Each Ticket links out to the two traces it carries: the Resolver run in Langfuse, and the ShopLite request in Grafana Explore against Tempo. Both appear only once there is a trace id to point at, and both base URLs come from `GET /config`.
@@ -89,7 +102,7 @@ Custom MCP servers run over stdio as child processes of portal-api. Each one can
 - Start it with `REPORTER_CUSTOMER_ID` or `REPORTER_EMAIL` for a customer Ticket. It then rejects any SELECT on a customer-owned table that does not filter by that customer, and exits if the reporter is not a ShopLite customer. Leave both unset for tester and Sentinel Tickets.
 - Every result is redacted before it leaves the server: card numbers are masked entirely, and every email except the reporter's is masked.
 - `run_readonly_sql` returns at most `QUERY_ROW_CAP` rows and says when it truncated.
-- `propose_data_fix` never executes. It checks the statement is a single `UPDATE` or `DELETE` with a `WHERE` clause on a ShopLite table, counts the rows it would touch, and returns a Proposal for the approval gate.
+- `propose_data_fix` never executes. It checks the statement is a single `UPDATE` or `DELETE` with a `WHERE` clause on a ShopLite table, counts the rows it would touch, and returns a Proposal for the approval gate. The portal holds the same statement to the same check before it runs one, so a Reviewer's edit is guarded exactly as the agent's own wording was.
 
 ```bash
 REPORTER_EMAIL=ava.chen@example.com pnpm --filter @incident-resolver/mcp-database start
@@ -141,6 +154,7 @@ Its integration tests generate one declined checkout against a running ShopLite,
 - Anything else fans out to all three Investigators in one turn, so their spans overlap in the trace instead of queueing: the **Log Investigator** over the mcp-observability tools (the trace and log lines behind the request, and whether the route is failing for everyone), the **Data Investigator** over the mcp-database tools (the Reporter's rows, and a data fix Proposal when one is wrong), and the **Incident Historian** over the mcp-incidents read tools (past Incidents with their documented resolution, after Cohere rerank). Each returns a short Evidence summary whose every entry carries its provenance.
 - The procedure is enforced in code, not only in the prompt. A middleware on the `task` tool refuses any subagent that is not declared, refuses an Investigator before Triage has run or when the fast path applies, refuses a second run of one that has already reported, and appends Triage's hypothesis to each Investigator's brief as focus — worded so it narrows where an Investigator looks first and never licenses it to skip its own source. A refused delegation comes back as a tool error saying what to do instead, so the run continues. The run report flags a run that investigated with fewer than three, or launched them in separate turns.
 - The run ends with a Verdict in a Zod response format: Outcome, Category, Confidence, root cause, Evidence references, and the Reply. A Verdict below the threshold is escalated in code, whatever the model wrote.
+- The Resolver's own tools are the writes — `apply_data_fix` and `send_customer_reply` — and every one of them is behind the approval gate. What each does is injected: the portal runs an approved fix through the writing role, and a run from the command line has no Reviewer, so it rejects a data fix with a reason the Resolver acts on and writes nothing.
 - Prompts are markdown in `packages/agents/prompts/`, one per agent, with `{{confidenceThreshold}}` filled from config. `pnpm prompts:sync` pushes them to Langfuse prompt management under `LANGFUSE_PROMPT_LABEL` (default `production`), skipping any whose text already matches the labelled version. At startup the agent fetches each prompt by name and label and falls back to the repository file whenever Langfuse is unconfigured, has no version under that label, or is unreachable, so a run never waits on the network. Which version each prompt came from is on the trace as `prompt.<name>` and in the CLI's run report.
 - Tracing is Langfuse v5: a `LangfuseSpanProcessor` in the OTel Node SDK plus the LangChain `CallbackHandler` on every invoke. The session id is the Ticket id, tags carry the Source, the model names, and the Category, and the subagent and tool spans nest under the run. Set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`; without them the run is untraced and every prompt comes from its file. `LANGFUSE_BASE_URL` defaults to Langfuse Cloud.
 - The MCP servers are spawned per run as stdio children from their own package directories, the way portal-api will spawn them. For a customer Ticket the database and observability servers are started with the Reporter's email, so every query is scoped to that customer and every other email is masked.
@@ -151,7 +165,7 @@ The CLI takes a Ticket as JSON (`id`, `source`, `reporterEmail` for customers, o
 pnpm prompts:sync                                              # optional: push the prompts to Langfuse
 pnpm resolve packages/agents/tickets/images-not-loading.json   # answered from the clear cache article, Triage only
 pnpm resolve packages/agents/tickets/declined-card.json        # answered from the payments row and the decline log line
-pnpm resolve packages/agents/tickets/stale-cart-total.json     # matched to a seeded Incident, whose documented UPDATE it proposes
+pnpm resolve packages/agents/tickets/stale-cart-total.json     # matched to a seeded Incident, whose documented UPDATE it takes to the gate
 ```
 
 Paths are relative to where you run the command. Pass `-` to read the Ticket from stdin, and `--thread <id>` to name the LangGraph thread; by default each run gets a fresh thread named after the Ticket id and the time.
