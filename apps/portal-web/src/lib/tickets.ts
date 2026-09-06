@@ -1,7 +1,11 @@
 import type {
+  ApprovalAction,
+  Decision,
   EvidenceReference,
   IncidentCategory,
   Outcome,
+  Proposal,
+  ReviewerDecision,
   TicketEventType,
   TicketSource,
   TicketStatus,
@@ -14,13 +18,67 @@ import type {
  * nothing of the database client they sit next to reaches the browser bundle.
  */
 export type {
+  ApprovalAction,
+  Decision,
   EvidenceReference,
   IncidentCategory,
   Outcome,
+  Proposal,
+  ReviewerDecision,
   TicketEventType,
   TicketSource,
   TicketStatus,
 };
+
+/** A Proposal the portal is holding, as `/tickets/:id/approvals` serves it. */
+export type Approval = {
+  id: string;
+  run: number;
+  action: ApprovalAction;
+  /** What this Reviewer may do with it: a data fix can be edited, a pull request cannot. */
+  allowedDecisions: Decision[];
+  proposal: Proposal;
+  /** The rows a data fix would touch, as they are now. Null for everything else. */
+  preview: DataFixPreview | null;
+  decision: Decision | null;
+  editedProposal: Proposal | null;
+  reason: string | null;
+  /** What running it did, once it has run. */
+  result: Record<string, unknown> | null;
+  createdAt: string;
+  decidedAt: string | null;
+  executedAt: string | null;
+};
+
+/** The rows a proposed data fix matches, or why they could not be read. */
+export type DataFixPreview = {
+  table?: string;
+  rowCount?: number;
+  rows?: Array<Record<string, unknown>>;
+  /** Set instead when the statement is one the portal would refuse to run. */
+  refused?: string;
+};
+
+/** The Proposal a Reviewer is being asked about, or undefined when there is none. */
+export function pendingApproval(approvals: Approval[]): Approval | undefined {
+  return approvals.find((approval) => approval.decision === null);
+}
+
+const actionLabels: Record<ApprovalAction, string> = {
+  apply_data_fix: "Data fix",
+  create_pull_request: "Pull request",
+  send_customer_reply: "Reply",
+};
+
+export const actionLabel = (action: ApprovalAction) => actionLabels[action];
+
+const decisionLabels: Record<Decision, string> = {
+  approve: "Approved",
+  edit: "Edited and approved",
+  reject: "Rejected",
+};
+
+export const decisionLabel = (decision: Decision) => decisionLabels[decision];
 
 /** A Ticket as the portal serves it: the row, with its times as ISO strings over JSON. */
 export type Ticket = Omit<typeof tickets.$inferSelect, "createdAt" | "closedAt"> & {

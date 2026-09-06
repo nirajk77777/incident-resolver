@@ -12,7 +12,11 @@ export type TimelineEntry = {
   createdAt: Date;
 };
 
-/** The timeline entry one Resolver event becomes: the type it is filed under, and its payload. */
+/**
+ * The timeline entry one Resolver event becomes: the type it is filed under, and its payload.
+ * The two entries the portal writes for itself — `status`, and the `interrupt` and `decision`
+ * either side of the approval gate — are not here: they carry more than the run reported.
+ */
 export function timelineEntryFor(event: TimelineResolverEvent): {
   type: TicketEventType;
   payload: Record<string, unknown>;
@@ -28,8 +32,6 @@ export function timelineEntryFor(event: TimelineResolverEvent): {
       return { type: event.type, payload: { name: event.name, result: event.result } };
     case "message":
       return { type: event.type, payload: { text: event.text } };
-    case "interrupt":
-      return { type: event.type, payload: { action: event.action, proposal: event.proposal } };
     case "verdict":
       return { type: event.type, payload: { ...event.verdict } };
   }

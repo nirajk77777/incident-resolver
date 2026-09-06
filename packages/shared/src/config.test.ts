@@ -31,6 +31,8 @@ describe("loadConfig", () => {
       databaseUrl: "postgres://postgres:postgres@localhost:5432/incident_resolver",
       shopliteReadonlyDatabaseUrl:
         "postgres://shoplite_reader:shoplite_reader@localhost:5432/incident_resolver",
+      shopliteWriteDatabaseUrl:
+        "postgres://shoplite_writer:shoplite_writer@localhost:5432/incident_resolver",
       otlpEndpoint: "http://localhost:4318",
       lokiUrl: "http://localhost:3100",
       tempoUrl: "http://localhost:3200",
@@ -63,6 +65,7 @@ describe("loadConfig", () => {
       SHOPLITE_SERVICE_NAME: "shop",
       DATABASE_URL: "postgres://u:p@db:5432/x",
       SHOPLITE_READONLY_DATABASE_URL: "postgres://r:p@db:5432/x",
+      SHOPLITE_WRITE_DATABASE_URL: "postgres://w:p@db:5432/x",
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://lgtm:4318",
       LOKI_URL: "http://lgtm:3100",
       TEMPO_URL: "http://lgtm:3200",
@@ -96,6 +99,7 @@ describe("loadConfig", () => {
     expect(config.infra).toEqual({
       databaseUrl: "postgres://u:p@db:5432/x",
       shopliteReadonlyDatabaseUrl: "postgres://r:p@db:5432/x",
+      shopliteWriteDatabaseUrl: "postgres://w:p@db:5432/x",
       otlpEndpoint: "http://lgtm:4318",
       lokiUrl: "http://lgtm:3100",
       tempoUrl: "http://lgtm:3200",

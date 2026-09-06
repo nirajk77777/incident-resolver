@@ -35,12 +35,12 @@ describe("nextStatus", () => {
     }
   });
 
-  it("moves to awaiting approval on an interrupt", () => {
+  it("moves to awaiting approval when the run stops at the gate", () => {
     expect(
       nextStatus("investigating", {
         type: "interrupt",
-        action: "propose_data_fix",
-        proposal: { kind: "data_fix" },
+        action: "apply_data_fix",
+        args: { sql: "UPDATE shoplite.cart_totals SET item_count = 1 WHERE cart_id = '1'" },
       }),
     ).toBe("awaiting_approval");
   });

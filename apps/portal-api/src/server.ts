@@ -1,9 +1,21 @@
-import { type Config, type Db, formatIssues, newTicketSchema } from "@incident-resolver/shared";
+import {
+  allowedDecisions,
+  type Config,
+  type Db,
+  type Decision,
+  formatIssues,
+  isApprovalAction,
+  newTicketSchema,
+  reviewerDecisionSchema,
+} from "@incident-resolver/shared";
 import Fastify, { type FastifyInstance } from "fastify";
 import { z } from "zod";
+import { type ApprovalRecord, createApprovalStore } from "./approvals";
 import { createTicketEventBus } from "./bus";
+import { createDataFixRunner } from "./data-fix";
 import type { TicketResolver } from "./resolver";
 import { createTicketRunner } from "./runner";
+import { noScores, type ScoreWriter } from "./scores";
 import {
   formatSseFrame,
   lastEventIdOf,
@@ -13,17 +25,45 @@ import {
 } from "./sse";
 import { createPortalStore } from "./store";
 import type { TimelineEntry } from "./timeline";
+import { createWriteEffects } from "./write-effects";
 
 export type PortalApiOptions = {
   db: Db;
   config: Config;
   /** The Resolver every Ticket is run through, chosen by config in `main.ts`. */
   resolver: TicketResolver;
+  /** Where a Reviewer's Decisions and each Ticket's Outcome are scored. None by default. */
+  scores?: ScoreWriter;
   logger?: boolean;
 };
 
 const ticketIdSchema = z.object({ id: z.uuid() });
 const reporterSchema = z.object({ email: z.email() });
+
+/**
+ * An approval as the portal serves it. The snapshot of changed rows stays behind: it exists so
+ * a person with database access can undo a fix, and it is the one thing here that was never
+ * masked, since a rollback needs the rows as they truly were.
+ */
+function asReviewable(approval: ApprovalRecord) {
+  return {
+    id: approval.id,
+    run: approval.run,
+    action: approval.action,
+    allowedDecisions: isApprovalAction(approval.action)
+      ? allowedDecisions[approval.action]
+      : ([] as readonly Decision[]),
+    proposal: approval.proposal,
+    preview: approval.preview,
+    decision: approval.decision,
+    editedProposal: approval.editedProposal,
+    reason: approval.reason,
+    result: approval.result,
+    createdAt: approval.createdAt,
+    decidedAt: approval.decidedAt,
+    executedAt: approval.executedAt,
+  };
+}
 
 /**
  * The portal's HTTP surface: Tickets in from customers, testers and Sentinel, their live
@@ -35,6 +75,7 @@ export function createPortalApi({
   db,
   config,
   resolver,
+  scores = noScores,
   logger = false,
 }: PortalApiOptions): FastifyInstance {
   // The portal holds SSE connections open for as long as a Ticket is watched, so shutdown
@@ -42,10 +83,19 @@ export function createPortalApi({
   const app = Fastify({ logger, forceCloseConnections: true });
   const store = createPortalStore(db);
   const bus = createTicketEventBus();
+  const dataFix = createDataFixRunner({
+    databaseUrl: config.infra.shopliteWriteDatabaseUrl,
+    rowCap: config.dataFixRowCap,
+  });
+  const approvals = createApprovalStore({ db, dataFix });
+  const effects = createWriteEffects({ approvals, dataFix, log: app.log });
   const runner = createTicketRunner({
     store,
+    approvals,
     bus,
     resolver,
+    effectsFor: (ticket, run) => effects(ticket.id, run),
+    scores,
     runTimeoutMs: config.runTimeoutMs,
     log: app.log,
   });
@@ -55,6 +105,8 @@ export function createPortalApi({
     for (const close of [...openStreams]) close();
     await runner.stop();
     await resolver.close?.();
+    await dataFix.close();
+    await scores.flush();
   });
 
   app.get("/health", async () => ({ status: "ok", resolver: resolver.name }));
@@ -87,6 +139,40 @@ export function createPortalApi({
     const ticket = await store.getTicket(params.data.id);
     if (!ticket) return reply.code(404).send({ error: "Not Found" });
     return ticket;
+  });
+
+  /**
+   * The Proposals this Ticket has raised, newest first, and what became of each. The card the
+   * Reviewer decides on is drawn from the newest undecided one.
+   */
+  app.get("/tickets/:id/approvals", async (request, reply) => {
+    const params = ticketIdSchema.safeParse(request.params);
+    if (!params.success) return reply.code(404).send({ error: "Not Found" });
+    const ticket = await store.getTicket(params.data.id);
+    if (!ticket) return reply.code(404).send({ error: "Not Found" });
+    return { approvals: (await approvals.forTicket(ticket.id)).map(asReviewable) };
+  });
+
+  /**
+   * A Reviewer's Decision on the Proposal a Ticket is waiting on. Recording it carries the run
+   * on in the background, so this answers as soon as the Decision is safely written; what the
+   * run then does arrives on the timeline like everything else.
+   */
+  app.post("/tickets/:id/decision", async (request, reply) => {
+    const params = ticketIdSchema.safeParse(request.params);
+    if (!params.success) return reply.code(404).send({ error: "Not Found" });
+    const ticket = await store.getTicket(params.data.id);
+    if (!ticket) return reply.code(404).send({ error: "Not Found" });
+
+    const answer = reviewerDecisionSchema.safeParse(request.body);
+    if (!answer.success) {
+      return reply.code(400).send({ error: "Bad Request", message: formatIssues(answer.error) });
+    }
+    const result = await runner.decide(ticket, answer.data);
+    if (!result.ok) {
+      return reply.code(result.status).send({ error: "Conflict", message: result.message });
+    }
+    return reply.code(202).send({ approval: asReviewable(result.approval) });
   });
 
   /** What the storefront's "My tickets" page reads: one Reporter's Tickets and their Replies. */

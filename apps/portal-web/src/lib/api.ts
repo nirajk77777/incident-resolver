@@ -1,4 +1,4 @@
-import type { Ticket, TimelineEntry } from "./tickets";
+import type { Approval, ReviewerDecision, Ticket, TimelineEntry } from "./tickets";
 
 /**
  * Everything the portal reads. The API is served under `/api` by the dev server's proxy, so
@@ -43,6 +43,23 @@ export const fileTicket = (ticket: NewTicket) =>
     headers: { "content-type": "application/json" },
     body: JSON.stringify(ticket),
   });
+
+/** Every Proposal this Ticket has raised, newest first, and what became of each. */
+export const fetchApprovals = (id: string) =>
+  read<{ approvals: Approval[] }>(`/tickets/${encodeURIComponent(id)}/approvals`).then(
+    (body) => body.approvals,
+  );
+
+/**
+ * The Reviewer's answer to the Proposal a Ticket is waiting on. The portal records it and
+ * carries the run on in the background, so what happens next arrives on the timeline.
+ */
+export const decide = (id: string, decision: ReviewerDecision) =>
+  read<{ approval: Approval }>(`/tickets/${encodeURIComponent(id)}/decision`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(decision),
+  }).then((body) => body.approval);
 
 /**
  * The live timeline. `lastEventId` is the sequence the page already holds, so a reconnect

@@ -71,6 +71,13 @@ const configSchema = z
       .string()
       .min(1)
       .default("postgres://shoplite_reader:shoplite_reader@localhost:5432/incident_resolver"),
+    // The role portal-api runs an approved data fix as, created by migration 0006. It can
+    // UPDATE and DELETE in the shoplite schema and nothing else, so an approved fix is the
+    // only write the agent's side of the system can reach.
+    SHOPLITE_WRITE_DATABASE_URL: z
+      .string()
+      .min(1)
+      .default("postgres://shoplite_writer:shoplite_writer@localhost:5432/incident_resolver"),
     OTEL_EXPORTER_OTLP_ENDPOINT: z.url().default("http://localhost:4318"),
     LOKI_URL: z.url().default("http://localhost:3100"),
     TEMPO_URL: z.url().default("http://localhost:3200"),
@@ -117,6 +124,7 @@ const configSchema = z
     infra: {
       databaseUrl: env.DATABASE_URL,
       shopliteReadonlyDatabaseUrl: env.SHOPLITE_READONLY_DATABASE_URL,
+      shopliteWriteDatabaseUrl: env.SHOPLITE_WRITE_DATABASE_URL,
       otlpEndpoint: env.OTEL_EXPORTER_OTLP_ENDPOINT,
       lokiUrl: env.LOKI_URL,
       tempoUrl: env.TEMPO_URL,

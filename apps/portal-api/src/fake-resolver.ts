@@ -1,9 +1,10 @@
 import type { Verdict } from "@incident-resolver/shared";
-import type { ResolverEvent, ResolverRun, TicketResolver } from "./resolver";
+import type { ResolverDecision, ResolverEvent, ResolverRun, TicketResolver } from "./resolver";
 
 /**
- * The Verdict the fake always reaches: demo moment one, a card the mock gateway declines
- * because it ends in 0002, answered from what the logs say the gateway replied.
+ * The Verdict the fake reaches when nothing is proposed: demo moment one, a card the mock
+ * gateway declines because it ends in 0002, answered from what the logs say the gateway
+ * replied.
  */
 export const FAKE_VERDICT: Verdict = {
   outcome: "answered",
@@ -51,6 +52,13 @@ const SCRIPT: ResolverEvent[] = [
 export type FakeResolverOptions = {
   /** Pause between events, so a demo timeline arrives one card at a time. */
   stepDelayMs?: number;
+  /**
+   * A data fix to take to the approval gate rather than answering outright. Given one, the
+   * fake proposes it, stops, and finishes according to what the Reviewer decided — which is
+   * how the whole gate, including running the approved statement, is exercised with no model
+   * behind it.
+   */
+  propose?: { sql: string; reason: string } | undefined;
 };
 
 /** Rejects when the run is aborted, so a cancelled run stops between steps. */
@@ -69,19 +77,78 @@ function pause(ms: number, signal: AbortSignal | undefined): Promise<void> {
   });
 }
 
+/** How a Ticket whose data fix a Reviewer approved ends. */
+function fixedVerdict(applied: string): Verdict {
+  return {
+    outcome: "data_fixed",
+    category: "data_issue",
+    confidence: 0.91,
+    rootCause:
+      "The denormalised cart_totals row was never refreshed when the item was removed, so the badge kept the old count and total.",
+    evidence: [{ fact: "The approved fix ran", provenance: `apply_data_fix: ${applied}` }],
+    reply: "We have corrected the total on your cart. Thanks for spotting it.",
+  };
+}
+
+/** How it ends when the Reviewer refused: nothing was changed, and a person takes it on. */
+function rejectedVerdict(reason: string): Verdict {
+  return {
+    outcome: "escalated",
+    category: "data_issue",
+    confidence: 0.91,
+    rootCause: `A Reviewer rejected the proposed data fix: ${reason}`,
+    evidence: [],
+    reply:
+      "Thanks for your report. We have not corrected this yet, so a member of the team is looking into it.",
+  };
+}
+
 /**
- * A Resolver that investigates nothing and always reaches the same Verdict. It exists so
- * the whole Ticket lifecycle — timeline, SSE, Outcome, Reply — is testable over HTTP with
- * no model behind it. The real Resolver plugs into the same seam.
+ * A Resolver that investigates nothing and reaches a scripted Verdict. It exists so the whole
+ * Ticket lifecycle — timeline, SSE, the approval gate, Outcome, Reply — is testable over HTTP
+ * with no model behind it. The real Resolver plugs into the same seam.
  */
-export function createFakeResolver({ stepDelayMs = 0 }: FakeResolverOptions = {}): TicketResolver {
+export function createFakeResolver({
+  stepDelayMs = 0,
+  propose,
+}: FakeResolverOptions = {}): TicketResolver {
+  async function* play(
+    events: ResolverEvent[],
+    signal: AbortSignal | undefined,
+  ): AsyncGenerator<ResolverEvent> {
+    for (const event of events) {
+      await pause(stepDelayMs, signal);
+      yield event;
+    }
+  }
+
   return {
     name: "fake",
-    async *resolve({ signal }: ResolverRun) {
-      for (const event of [...SCRIPT, { type: "verdict", verdict: FAKE_VERDICT } as const]) {
-        await pause(stepDelayMs, signal);
-        yield event;
+
+    resolve({ signal }: ResolverRun) {
+      const ending: ResolverEvent[] = propose
+        ? [{ type: "interrupt", action: "apply_data_fix", args: { ...propose } }]
+        : [{ type: "verdict", verdict: FAKE_VERDICT }];
+      return play([...SCRIPT, ...ending], signal);
+    },
+
+    async *resume({ effects, signal }: ResolverRun, decision: ResolverDecision) {
+      if (decision.decision === "reject") {
+        yield* play([{ type: "verdict", verdict: rejectedVerdict(decision.reason ?? "") }], signal);
+        return;
       }
+      // Approved or edited: the write runs through the portal's own effect, exactly as the
+      // real Resolver's tool would run it, and what it says goes onto the timeline.
+      const settled =
+        decision.proposal?.kind === "data_fix" ? decision.proposal.sql : (propose?.sql ?? "");
+      const said = await effects.applyDataFix({ sql: settled, reason: propose?.reason ?? "" });
+      yield* play(
+        [
+          { type: "tool_result", name: "apply_data_fix", result: said },
+          { type: "verdict", verdict: fixedVerdict(said) },
+        ],
+        signal,
+      );
     },
   };
 }

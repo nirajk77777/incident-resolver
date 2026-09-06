@@ -5,20 +5,25 @@ import {
   createPromptClient,
   createResolver,
   defaultThreadId,
+  interruptsFor,
   type LangfuseCredentials,
   langfusePromptFetcher,
   type Prompts,
+  type RunOutcome,
   type RunReport,
   resolvePrompts,
+  resumeTicket,
   startTracing,
   streamTicket,
   traceRun,
 } from "@incident-resolver/agents";
-import type { Config, Ticket } from "@incident-resolver/shared";
+import { argumentsOf, type Config, isApprovalAction, type Ticket } from "@incident-resolver/shared";
+import type { Callbacks } from "@langchain/core/callbacks/manager";
 import type { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
+import type { Decision } from "langchain";
 import { createEventTranslator } from "./agent-events";
 import { createEventQueue } from "./queue";
-import type { ResolverEvent, ResolverRun, TicketResolver } from "./resolver";
+import type { ResolverDecision, ResolverEvent, ResolverRun, TicketResolver } from "./resolver";
 
 export type NodeEnv = Record<string, string | undefined>;
 
@@ -86,53 +91,89 @@ export function createAgentResolver({
     return shared;
   }
 
+  /**
+   * One pass over the graph: from the Ticket, or from a Reviewer's Decision. Both stream the
+   * same way and both can end at the gate, since a run may have more than one write to make.
+   */
+  async function* pass(
+    { ticket, run, effects, signal }: ResolverRun,
+    decision: ResolverDecision | undefined,
+  ): AsyncGenerator<ResolverEvent> {
+    const { prompts, checkpointer } = await load();
+    const mcp = createMcpClient(ticket, env);
+    const queue = createEventQueue<ResolverEvent>();
+    try {
+      const tools = await mcp.getTools();
+      const resolver = createResolver({
+        config,
+        models,
+        tools,
+        prompts,
+        checkpointer,
+        writeEffects: effects,
+        interruptOn: interruptsFor(ticket),
+      });
+      const translate = createEventTranslator();
+      // Derived from the Ticket and the run number, so a run that paused minutes ago is
+      // resumed on the thread it paused on, with everything it had gathered still there.
+      const threadId = defaultThreadId(ticket, run);
+      const options = {
+        resolver,
+        ticket,
+        threadId,
+        config,
+        prompts,
+        signal,
+        onEvent: (event: Parameters<ReturnType<typeof createEventTranslator>>[0]) => {
+          const entry = translate(event);
+          if (entry) queue.push(entry);
+        },
+      };
+
+      const traced = traceRun(
+        {
+          ticket,
+          models: config.models,
+          prompts,
+          onTrace: (langfuseTraceId) => queue.push({ type: "trace", langfuseTraceId }),
+        },
+        (callbacks: Callbacks): Promise<RunOutcome> =>
+          decision
+            ? resumeTicket({ ...options, callbacks }, [decisionFor(decision)])
+            : streamTicket({ ...options, callbacks }),
+      );
+      // However the run ends, the timeline stops with it; a failure is re-thrown by the
+      // `await` below, once everything the run did manage to report has been yielded.
+      const running = traced.finally(() => queue.close());
+      running.catch(() => {});
+
+      for await (const event of queue) yield event;
+      const outcome = await running;
+      if (outcome.status === "paused") {
+        for (const proposal of outcome.proposals) {
+          if (!isApprovalAction(proposal.name)) {
+            throw new Error(`The run stopped on ${proposal.name}, which is not a gated action`);
+          }
+          yield { type: "interrupt", action: proposal.name, args: proposal.args };
+        }
+        return;
+      }
+      reportRun(ticket, outcome.report, log);
+      yield { type: "verdict", verdict: outcome.report.verdict };
+    } finally {
+      await mcp.close();
+    }
+  }
+
   return {
     name: "real",
 
-    async *resolve({ ticket, signal }: ResolverRun): AsyncGenerator<ResolverEvent> {
-      const { prompts, checkpointer } = await load();
-      const mcp = createMcpClient(ticket, env);
-      const queue = createEventQueue<ResolverEvent>();
-      try {
-        const tools = await mcp.getTools();
-        const resolver = createResolver({ config, models, tools, prompts, checkpointer });
-        const translate = createEventTranslator();
-        const threadId = defaultThreadId(ticket);
+    resolve(run: ResolverRun) {
+      return pass(run, undefined);
+    },
 
-        const traced = traceRun(
-          {
-            ticket,
-            models: config.models,
-            prompts,
-            onTrace: (langfuseTraceId) => queue.push({ type: "trace", langfuseTraceId }),
-          },
-          (callbacks) =>
-            streamTicket({
-              resolver,
-              ticket,
-              threadId,
-              config,
-              prompts,
-              callbacks,
-              signal,
-              onEvent: (event) => {
-                const entry = translate(event);
-                if (entry) queue.push(entry);
-              },
-            }),
-        );
-        // However the run ends, the timeline stops with it; a failure is re-thrown by the
-        // `await` below, once everything the run did manage to report has been yielded.
-        const running = traced.finally(() => queue.close());
-        running.catch(() => {});
-
-        for await (const event of queue) yield event;
-        const report = await running;
-        reportRun(ticket, report, log);
-        yield { type: "verdict", verdict: report.verdict };
-      } finally {
-        await mcp.close();
-      }
+    resume(run: ResolverRun, decision: ResolverDecision) {
+      return pass(run, decision);
     },
 
     async close() {
@@ -141,6 +182,24 @@ export function createAgentResolver({
       await tracing.shutdown();
     },
   };
+}
+
+/**
+ * The Reviewer's answer in the terms the human-in-the-loop middleware resumes on. An edit
+ * arrives as the arguments of the interrupted call, so the tool runs on the Reviewer's
+ * wording; a rejection arrives as the message the agent reads before it decides what to do.
+ */
+function decisionFor(decision: ResolverDecision): Decision {
+  if (decision.decision === "edit" && decision.proposal) {
+    return {
+      type: "edit",
+      editedAction: { name: decision.action, args: argumentsOf(decision.proposal) },
+    };
+  }
+  if (decision.decision === "reject") {
+    return { type: "reject", message: decision.reason ?? "A Reviewer rejected this." };
+  }
+  return { type: "approve" };
 }
 
 function reportRun(ticket: Ticket, report: RunReport, log: (line: string) => void): void {

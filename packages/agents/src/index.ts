@@ -6,6 +6,7 @@ export {
   resolverSubagents,
   withTriageFocus,
 } from "./guard";
+export { gatedTools, interruptsFor } from "./interrupts";
 export {
   createPromptClient,
   type LangfuseCredentials,
@@ -34,12 +35,15 @@ export {
 export {
   createResolver,
   defaultThreadId,
+  freshThreadId,
   type ResolveOptions,
   type Resolver,
   type ResolverOptions,
+  type RunOutcome,
   type RunReport,
   renderTicket,
   resolveTicket,
+  resumeTicket,
   type StreamTicketOptions,
   streamTicket,
 } from "./resolver";
@@ -74,3 +78,11 @@ export {
   traceRun,
   traceTags,
 } from "./tracing";
+export {
+  APPLY_DATA_FIX,
+  createWriteTools,
+  type DataFixRequest,
+  type ReplyRequest,
+  SEND_CUSTOMER_REPLY,
+  type WriteEffects,
+} from "./write-tools";

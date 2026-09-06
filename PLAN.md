@@ -224,4 +224,4 @@ All settled on 2026-09-05.
 - **Approval editing**: data fix Proposals open in a SQL textarea; Replies in a plain textarea. PRs are approve or reject only.
 - **Config**: model names, Confidence threshold (0.6), Sentinel thresholds, run timeout, and row cap live in one `config.ts` read from env with defaults.
 - **Timeline transport**: `portal-api` writes `ticket_events` as the agent streams, and serves them over SSE with last-event-id so a refreshed page catches up.
-- **Decisions are recorded** in `docs/adr/`: ADR-0001 ShopLite in a separate repository, ADR-0002 no shell for the code agent.
+- **Decisions are recorded** in `docs/adr/`: ADR-0001 ShopLite in a separate repository, ADR-0002 no shell for the code agent, ADR-0003 the Resolver owns every write and the gate is on its own tools.

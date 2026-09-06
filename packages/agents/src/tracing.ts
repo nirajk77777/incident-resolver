@@ -10,7 +10,7 @@ import {
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import type { LangfuseCredentials } from "./langfuse-prompts";
 import { type Prompts, promptVersions } from "./prompts";
-import type { RunReport } from "./resolver";
+import type { RunOutcome } from "./resolver";
 
 /**
  * Langfuse v5 rides on OpenTelemetry: a LangfuseSpanProcessor in the Node SDK exports every
@@ -67,11 +67,15 @@ export type TraceRunOptions = {
  * the root span carries the tags. Source, models, and the prompt versions are known up front;
  * the Category is written onto the root span once the Verdict is in, since trace tags are read
  * from any span.
+ *
+ * A run that stops at the approval gate is one trace, and the resume that carries it on is
+ * another. They belong to the same Ticket, and therefore the same Langfuse session, which is
+ * what keeps a Ticket's whole lifecycle readable in one place.
  */
 export function traceRun(
   { ticket, models, prompts, onTrace }: TraceRunOptions,
-  run: (callbacks: Callbacks) => Promise<RunReport>,
-): Promise<RunReport> {
+  run: (callbacks: Callbacks) => Promise<RunOutcome>,
+): Promise<RunOutcome> {
   const sessionId = ticket.id;
   const tags = traceTags(ticket, models);
   // Flat: Langfuse trace metadata is string-valued, so each prompt gets its own key.
@@ -100,13 +104,20 @@ export function traceRun(
         const { traceId } = span.otelSpan.spanContext();
         if (onTrace && traceId && !/^0+$/.test(traceId)) onTrace(traceId);
         const handler = new CallbackHandler({ sessionId, tags, traceMetadata: metadata });
-        const report = await run([handler]);
-        span.update({ output: report.verdict });
-        span.otelSpan.setAttribute(
-          LangfuseOtelSpanAttributes.TRACE_TAGS,
-          traceTags(ticket, models, report.verdict.category),
-        );
-        return report;
+        const outcome = await run([handler]);
+        if (outcome.status === "finished") {
+          span.update({ output: outcome.report.verdict });
+          span.otelSpan.setAttribute(
+            LangfuseOtelSpanAttributes.TRACE_TAGS,
+            traceTags(ticket, models, outcome.report.verdict.category),
+          );
+        } else {
+          // A paused run has no Verdict yet: what it produced is the Proposals it is holding.
+          span.update({
+            output: { awaitingApproval: outcome.proposals.map((proposal) => proposal.name) },
+          });
+        }
+        return outcome;
       },
       { asType: "agent" },
     ),

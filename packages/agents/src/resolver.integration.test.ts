@@ -1,16 +1,27 @@
 import { fileURLToPath } from "node:url";
 import { seedIncidentIds } from "@incident-resolver/mcp-incidents";
-import { createDb, type Db, loadConfig, runMigrations } from "@incident-resolver/shared";
+import { createDb, type Db, loadConfig, messageOf, runMigrations } from "@incident-resolver/shared";
+import type { Callbacks } from "@langchain/core/callbacks/manager";
 import type { StructuredTool } from "@langchain/core/tools";
 import type { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 import type { MultiServerMCPClient } from "@langchain/mcp-adapters";
+import type { Decision } from "langchain";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createCheckpointer } from "./checkpointer";
 import { readTicket } from "./cli-args";
+import { interruptsFor } from "./interrupts";
 import { createMcpClient } from "./mcp";
 import { createModels } from "./models";
 import { type Prompts, resolvePrompts } from "./prompts";
-import { createResolver, defaultThreadId, type Resolver, resolveTicket } from "./resolver";
+import {
+  createResolver,
+  freshThreadId,
+  type Resolver,
+  type RunOutcome,
+  type RunReport,
+  resolveTicket,
+  resumeTicket,
+} from "./resolver";
 import {
   DATA_INVESTIGATOR,
   INCIDENT_HISTORIAN,
@@ -19,6 +30,7 @@ import {
   TRIAGE,
 } from "./subagents";
 import { startTracing, type Tracing, traceRun } from "./tracing";
+import type { WriteEffects } from "./write-tools";
 
 // The end-to-end agent slice, driven the way the CLI drives it. Needs `docker compose up`,
 // this repo's `pnpm db:migrate` and `pnpm seed:incidents`, ShopLite migrated, seeded, and
@@ -122,17 +134,69 @@ describe.skipIf(!hasApiKeys)(
       await tracing?.shutdown();
     });
 
-    async function run(name: string) {
+    /**
+     * The Reviewer these runs get: approves everything, and stands in for the portal by
+     * running the approved statement itself. The guard on that statement, and the transaction
+     * and snapshot around it, are the portal's and are covered by its own tests; what matters
+     * here is that the gate stops the run, the Decision carries it on, and the Verdict knows
+     * the fix ran.
+     */
+    function approvingEffects(applied: string[]): WriteEffects {
+      return {
+        async applyDataFix({ sql }) {
+          applied.push(sql);
+          const client = await admin.$client.connect();
+          try {
+            await client.query("BEGIN");
+            // The role the portal runs an approved fix as has search_path = shoplite, so an
+            // unqualified `UPDATE cart_totals` resolves. This connection is the superuser's,
+            // so the same has to be said here for the statement to mean the same thing.
+            await client.query("SET LOCAL search_path = shoplite");
+            const result = await client.query(sql);
+            await client.query("COMMIT");
+            return `The fix ran. ${result.rowCount ?? 0} row(s) changed.`;
+          } catch (error) {
+            await client.query("ROLLBACK").catch(() => {});
+            // Reported the way the portal's own effect reports it, so the Resolver can decide
+            // around a statement that would not run rather than the run failing here.
+            return `The fix did not run and nothing was changed. ${messageOf(error)}`;
+          } finally {
+            client.release();
+          }
+        },
+        async sendCustomerReply({ text }) {
+          return `Sent: ${text}`;
+        },
+      };
+    }
+
+    /** One run, carried through the gate to its Verdict, with the statements it ran. */
+    async function run(name: string): Promise<{ report: RunReport; applied: string[] }> {
       const ticket = await readTicket(fixture(name));
       const mcp = createMcpClient(ticket);
       clients.push(mcp);
       const tools = await mcp.getTools();
       const models = createModels(config, openAiApiKey as string);
-      const resolver: Resolver = createResolver({ config, models, tools, prompts, checkpointer });
-      const threadId = defaultThreadId(ticket);
-      return traceRun({ ticket, models: config.models, prompts }, (callbacks) =>
-        resolveTicket({ resolver, ticket, threadId, config, prompts, callbacks }),
-      );
+      const applied: string[] = [];
+      const resolver: Resolver = createResolver({
+        config,
+        models,
+        tools,
+        prompts,
+        checkpointer,
+        writeEffects: approvingEffects(applied),
+        interruptOn: interruptsFor(ticket),
+      });
+      const options = { resolver, ticket, threadId: freshThreadId(ticket), config, prompts };
+      const trace = (go: (callbacks: Callbacks) => Promise<RunOutcome>) =>
+        traceRun({ ticket, models: config.models, prompts }, go);
+
+      let outcome = await trace((callbacks) => resolveTicket({ ...options, callbacks }));
+      while (outcome.status === "paused") {
+        const approvals = outcome.proposals.map((): Decision => ({ type: "approve" }));
+        outcome = await trace((callbacks) => resumeTicket({ ...options, callbacks }, approvals));
+      }
+      return { report: outcome.report, applied };
     }
 
     /**
@@ -173,7 +237,7 @@ describe.skipIf(!hasApiKeys)(
     }
 
     it("answers the images-not-loading Ticket from the clear cache article without an Investigator", async () => {
-      const report = await run("images-not-loading");
+      const { report } = await run("images-not-loading");
 
       expect(report.verdict.outcome).toBe("answered");
       expect(report.verdict.category).toBe("question");
@@ -191,7 +255,7 @@ describe.skipIf(!hasApiKeys)(
       clients.push(mcp);
       await waitForDeclineLine(await mcp.getTools());
 
-      const report = await run("declined-card");
+      const { report } = await run("declined-card");
 
       expect(report.verdict.outcome).toBe("answered");
       expect(report.verdict.category).toBe("user_error");
@@ -213,10 +277,10 @@ describe.skipIf(!hasApiKeys)(
       expect(report.verdict.reply).not.toMatch(traceIdPattern);
     });
 
-    it("cites the seeded Incident and proposes its documented data fix on the stale cart total Ticket", async () => {
+    it("cites the seeded Incident and runs its documented data fix once approved", async () => {
       await staleTheCartTotals();
 
-      const report = await run("stale-cart-total");
+      const { report, applied } = await run("stale-cart-total");
 
       expect(report.verdict.category).toBe("data_issue");
       expect(report.subagentsInvoked).toEqual(
@@ -233,12 +297,23 @@ describe.skipIf(!hasApiKeys)(
       expect(cartTotalsIncidents.some((id) => evidence.includes(id))).toBe(true);
       expect(evidence).not.toContain(seedIncidentIds.redHerring);
 
-      // The documented fix, carried into the Verdict rather than invented. mcp-database sets
-      // the search path, so the Proposal's UPDATE may or may not qualify the schema.
-      expect(evidence).toMatch(/UPDATE\s+(shoplite\.)?cart_totals/i);
+      // The documented fix, taken to the gate rather than invented. mcp-database sets the
+      // search path, so the statement may or may not qualify the schema.
+      expect(applied).toHaveLength(1);
+      expect(applied[0]).toMatch(/^\s*UPDATE\s+(shoplite\.)?cart_totals/i);
 
-      // This build cannot execute a data fix, so it goes to a human with the Proposal attached.
-      expect(report.verdict.outcome).toBe("escalated");
+      // Demo moment 2: the Reviewer approved, the row was corrected, and the Verdict says so.
+      expect(report.verdict.outcome).toBe("data_fixed");
+      const { rows } = await admin.$client.query<{ item_count: number; lines: number }>(
+        `SELECT t.item_count, coalesce(sum(i.quantity), 0)::int AS lines
+           FROM shoplite.carts c
+           JOIN shoplite.cart_totals t ON t.cart_id = c.id
+           LEFT JOIN shoplite.cart_items i ON i.cart_id = c.id
+          WHERE c.customer_id = $1 AND c.status = 'open'
+          GROUP BY t.item_count`,
+        [ava.id],
+      );
+      expect(rows[0]?.item_count).toBe(rows[0]?.lines);
     });
   },
   600_000,

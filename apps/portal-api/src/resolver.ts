@@ -1,4 +1,12 @@
-import type { Config, Ticket, Verdict } from "@incident-resolver/shared";
+import type { WriteEffects } from "@incident-resolver/agents";
+import type {
+  ApprovalAction,
+  Config,
+  Decision,
+  Proposal,
+  Ticket,
+  Verdict,
+} from "@incident-resolver/shared";
 import { createAgentResolver, type NodeEnv } from "./agent-resolver";
 import { createFakeResolver } from "./fake-resolver";
 
@@ -14,8 +22,12 @@ export type ResolverEvent =
   | { type: "tool_call"; name: string; args: unknown }
   | { type: "tool_result"; name: string; result: unknown }
   | { type: "message"; text: string }
-  /** A Proposal the run cannot carry out on its own: it waits here for a Decision. */
-  | { type: "interrupt"; action: string; proposal: unknown }
+  /**
+   * A write the run cannot make on its own. The stream ends here and the run waits on the
+   * thread until a Decision resumes it; `args` is the interrupted tool call's arguments,
+   * which the portal reads the Proposal out of.
+   */
+  | { type: "interrupt"; action: ApprovalAction; args: Record<string, unknown> }
   /**
    * The Langfuse trace this run is writing to. Not a timeline entry: it goes on the Ticket,
    * so the portal can link to the trace of whichever run is the latest.
@@ -23,25 +35,41 @@ export type ResolverEvent =
   | { type: "trace"; langfuseTraceId: string }
   | { type: "verdict"; verdict: Verdict };
 
-/** Everything the Resolver reports that the timeline records. */
-export type TimelineResolverEvent = Exclude<ResolverEvent, { type: "trace" }>;
+/** Everything the Resolver reports that the timeline records without adding to it. */
+export type TimelineResolverEvent = Exclude<ResolverEvent, { type: "trace" | "interrupt" }>;
 
 export type ResolverRun = {
   ticket: Ticket;
   /** Counts re-runs of the same Ticket from 1; stamped on every timeline entry. */
   run: number;
+  /** What the portal does when one of this run's writes is approved. */
+  effects: WriteEffects;
   signal?: AbortSignal;
+};
+
+/** The Reviewer's answer, as the run that is waiting on it needs to hear it. */
+export type ResolverDecision = {
+  action: ApprovalAction;
+  decision: Decision;
+  /** The Proposal as the Reviewer edited it, when the Decision was `edit`. */
+  proposal?: Proposal | undefined;
+  /** Why, when the Decision was `reject`. The agent reads this and decides what to do instead. */
+  reason?: string | undefined;
 };
 
 /**
  * The seam between the portal and whatever investigates a Ticket. The portal reads the
- * stream, writes the timeline, and moves the lifecycle; it knows nothing else about the
- * run. A stream that ends without a Verdict left the Ticket unresolved, and the portal
- * treats that as a failed run.
+ * stream, writes the timeline, and moves the lifecycle; it knows nothing else about the run.
+ *
+ * A stream ends in one of three ways. A Verdict closes the Ticket. An interrupt leaves it
+ * waiting on a Reviewer, and `resume` is what carries it on. Anything else left the Ticket
+ * unresolved, and the portal treats that as a failed run.
  */
 export type TicketResolver = {
   name: string;
   resolve(run: ResolverRun): AsyncIterable<ResolverEvent>;
+  /** Carries a run that stopped at the gate on, with what the Reviewer decided. */
+  resume(run: ResolverRun, decision: ResolverDecision): AsyncIterable<ResolverEvent>;
   /** Releases whatever the Resolver holds open between runs. Called when the portal closes. */
   close?(): Promise<void>;
 };

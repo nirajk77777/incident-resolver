@@ -2,6 +2,7 @@ import { createDb, loadConfig, runMigrations, type Ticket } from "@incident-reso
 import type { MultiServerMCPClient } from "@langchain/mcp-adapters";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createCheckpointer } from "./checkpointer";
+import { interruptsFor } from "./interrupts";
 import { createMcpClient } from "./mcp";
 import { createModels } from "./models";
 import { resolvePrompts } from "./prompts";
@@ -132,6 +133,11 @@ describe("Resolver wiring", () => {
           variables: { confidenceThreshold: config.confidenceThreshold },
         }),
         checkpointer,
+        writeEffects: {
+          applyDataFix: async () => "not reached",
+          sendCustomerReply: async () => "not reached",
+        },
+        interruptOn: interruptsFor(customerTicket),
       });
       expect(resolver).toBeDefined();
       const tuple = await checkpointer.getTuple({

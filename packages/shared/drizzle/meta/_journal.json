@@ -43,6 +43,20 @@
       "when": 1788713862106,
       "tag": "0005_langfuse_trace",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1788722165727,
+      "tag": "0006_approval_gate",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1788722171411,
+      "tag": "0007_shoplite_writer",
+      "breakpoints": true
     }
   ]
 }

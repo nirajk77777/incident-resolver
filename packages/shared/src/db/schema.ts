@@ -197,19 +197,35 @@ export const ticketEvents = portal.table(
 );
 
 /** A Proposal waiting on a Reviewer, and what they decided. The portal executes it, never the agent. */
-export const approvals = portal.table("approvals", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  ticketId: uuid("ticket_id")
-    .notNull()
-    .references(() => tickets.id, { onDelete: "cascade" }),
-  /** The interrupted tool call the Proposal came from, for example `propose_data_fix`. */
-  action: text("action").notNull(),
-  proposal: jsonb("proposal").$type<Record<string, unknown>>().notNull(),
-  decision: approvalDecision("decision"),
-  /** The Proposal as the Reviewer edited it, when the Decision was `edit`. */
-  editedProposal: jsonb("edited_proposal").$type<Record<string, unknown>>(),
-  /** The rows a data fix touched, before it ran, so it can be rolled back. */
-  snapshot: jsonb("snapshot"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  decidedAt: timestamp("decided_at", { withTimezone: true }),
-});
+export const approvals = portal.table(
+  "approvals",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    ticketId: uuid("ticket_id")
+      .notNull()
+      .references(() => tickets.id, { onDelete: "cascade" }),
+    /** Which run of the Ticket is paused on this Proposal, counting from 1. */
+    run: integer("run").notNull().default(1),
+    /** The interrupted tool call the Proposal came from, for example `apply_data_fix`. */
+    action: text("action").notNull(),
+    proposal: jsonb("proposal").$type<Record<string, unknown>>().notNull(),
+    /**
+     * What the Proposal would touch, read before the Reviewer sees it: the rows a data fix
+     * matches today. Shown on the approval card so a Decision is made against the data.
+     */
+    preview: jsonb("preview").$type<Record<string, unknown>>(),
+    decision: approvalDecision("decision"),
+    /** The Proposal as the Reviewer edited it, when the Decision was `edit`. */
+    editedProposal: jsonb("edited_proposal").$type<Record<string, unknown>>(),
+    /** Why the Reviewer rejected it. The agent is told this and decides what to do instead. */
+    reason: text("reason"),
+    /** The rows a data fix touched, as they were before it ran, so it can be rolled back. */
+    snapshot: jsonb("snapshot"),
+    /** What running it did: the statement, the table, and the rows it changed. */
+    result: jsonb("result").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    executedAt: timestamp("executed_at", { withTimezone: true }),
+  },
+  (table) => [index("approvals_ticket_id_idx").on(table.ticketId, table.createdAt)],
+);

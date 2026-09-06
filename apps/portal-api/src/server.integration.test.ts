@@ -100,6 +100,27 @@ async function streamUntil(
 const isClosed = (frame: SseFrame) =>
   frame.data.type === "status" && frame.data.payload.status === "closed";
 
+const isWaiting = (frame: SseFrame) =>
+  frame.data.type === "status" && frame.data.payload.status === "awaiting_approval";
+
+/** An approval as `/tickets/:id/approvals` serves it. */
+type ApprovalBody = {
+  id: string;
+  action: string;
+  allowedDecisions: string[];
+  proposal: Record<string, unknown>;
+  preview: Record<string, unknown> | null;
+  decision: string | null;
+  reason: string | null;
+  result: Record<string, unknown> | null;
+  executedAt: string | null;
+};
+
+/** A canned Resolver that never proposes anything, so it is never resumed. */
+function neverResumed(): AsyncIterable<ResolverEvent> {
+  throw new Error("This Resolver proposes nothing, so it is never resumed");
+}
+
 /** A Reporter nobody else in this run shares, so assertions see only their own Tickets. */
 const reporter = (name: string) => `${name}-${randomUUID()}@example.com`;
 
@@ -352,6 +373,7 @@ describe("a run that reports its trace", () => {
       yield { type: "trace", langfuseTraceId: traceId };
       yield { type: "verdict", verdict: FAKE_VERDICT };
     },
+    resume: neverResumed,
   };
 
   it("puts the trace on the Ticket and leaves the timeline to what the run did", async () => {
@@ -382,6 +404,7 @@ describe("a run that fails", () => {
       yield { type: "subagent_start", name: "triage" };
       throw new Error("the model went away");
     },
+    resume: neverResumed,
   };
 
   it("leaves the Ticket closed and escalated, not stuck mid-investigation", async () => {
@@ -407,53 +430,264 @@ describe("a run that fails", () => {
   });
 });
 
-describe("a run that waits for a Reviewer", () => {
-  /**
-   * The approval gate itself belongs to a later issue, but a Resolver that interrupts is
-   * what drives the two lifecycle statuses either side of it, so the portal has to move
-   * through them from the stream alone.
-   */
-  const interruptingResolver: TicketResolver = {
-    name: "interrupting",
-    async *resolve(): AsyncIterable<ResolverEvent> {
-      yield { type: "subagent_start", name: "data-investigator" };
-      yield {
-        type: "interrupt",
-        action: "propose_data_fix",
-        proposal: { kind: "data_fix", table: "shoplite.cart_totals" },
+describe("the approval gate", () => {
+  /** A cart of this test's own whose denormalised total has gone stale: demo moment two. */
+  let customerId: string;
+  let cartId: string;
+
+  const proposal = () => ({
+    sql: `UPDATE shoplite.cart_totals SET item_count = 1, total_cents = 1500 WHERE cart_id = '${cartId}'`,
+    reason: "cart_totals still holds the count from before the item was removed",
+  });
+
+  /** The fake, configured to take that fix to the gate rather than answering outright. */
+  const proposing = () => createFakeResolver({ propose: proposal() });
+
+  async function totals(): Promise<{ item_count: number; total_cents: number } | undefined> {
+    const { rows } = await db.$client.query<{ item_count: number; total_cents: number }>(
+      "SELECT item_count, total_cents FROM shoplite.cart_totals WHERE cart_id = $1",
+      [cartId],
+    );
+    return rows[0];
+  }
+
+  /** Opens a Ticket and waits for it to stop at the gate. */
+  async function openAndWait(portalUrl: string): Promise<TicketBody> {
+    const created = await post<TicketBody>(`${portalUrl}/tickets`, {
+      source: "tester",
+      title: "Cart total wrong",
+      body: "Removing an item leaves the badge stale",
+    });
+    await streamUntil(`${portalUrl}/tickets/${created.body.id}/events`, isWaiting);
+    return created.body;
+  }
+
+  beforeAll(async () => {
+    const { rows } = await db.$client.query<{ id: string }>(
+      "INSERT INTO shoplite.customers (email, name) VALUES ($1, 'Gate Test') RETURNING id",
+      [`gate-${randomUUID()}@example.com`],
+    );
+    customerId = rows[0]?.id as string;
+    const cart = await db.$client.query<{ id: string }>(
+      "INSERT INTO shoplite.carts (customer_id, status) VALUES ($1, 'open') RETURNING id",
+      [customerId],
+    );
+    cartId = cart.rows[0]?.id as string;
+    await db.$client.query(
+      "INSERT INTO shoplite.cart_totals (cart_id, item_count, subtotal_cents, total_cents) VALUES ($1, 4, 6000, 6000)",
+      [cartId],
+    );
+  });
+
+  afterAll(async () => {
+    if (!customerId) return;
+    await db.$client.query("DELETE FROM shoplite.carts WHERE customer_id = $1", [customerId]);
+    await db.$client.query("DELETE FROM shoplite.customers WHERE id = $1", [customerId]);
+  });
+
+  it("stops at the Proposal with the SQL and the rows it would touch, and waits", async () => {
+    const [portal, portalUrl] = await startApi(proposing());
+    try {
+      const ticket = await openAndWait(portalUrl);
+
+      const waiting = await get<TicketBody>(`${portalUrl}/tickets/${ticket.id}`);
+      expect(waiting.body.status).toBe("awaiting_approval");
+
+      const open = await get<{ approvals: ApprovalBody[] }>(
+        `${portalUrl}/tickets/${ticket.id}/approvals`,
+      );
+      const [approval] = open.body.approvals;
+      expect(approval).toMatchObject({
+        action: "apply_data_fix",
+        allowedDecisions: ["approve", "edit", "reject"],
+        decision: null,
+      });
+      expect(approval?.proposal).toMatchObject({
+        kind: "data_fix",
+        statement: "update",
+        table: "shoplite.cart_totals",
+        sql: proposal().sql,
+        matchingRows: 1,
+      });
+      // The card shows the row as it is now, which is what makes the Decision an informed one.
+      expect(approval?.preview).toMatchObject({ rowCount: 1 });
+      const preview = approval?.preview as { rows: Array<Record<string, unknown>> };
+      expect(preview.rows[0]).toMatchObject({ item_count: 4 });
+
+      // Nothing has run: the fix waits for a person.
+      expect(await totals()).toMatchObject({ item_count: 4 });
+    } finally {
+      await portal.close();
+    }
+  });
+
+  it("corrects the row on approval and closes the Ticket data fixed", async () => {
+    const [portal, portalUrl] = await startApi(proposing());
+    try {
+      const ticket = await openAndWait(portalUrl);
+
+      const decided = await post<{ approval: ApprovalBody }>(
+        `${portalUrl}/tickets/${ticket.id}/decision`,
+        { decision: "approve" },
+      );
+      expect(decided.status).toBe(202);
+
+      const frames = await streamUntil(`${portalUrl}/tickets/${ticket.id}/events`, isClosed);
+      expect(
+        frames.filter((f) => f.data.type === "status").map((frame) => frame.data.payload.status),
+      ).toEqual(["triaging", "investigating", "awaiting_approval", "acting", "closed"]);
+      expect(frames.some((frame) => frame.data.type === "decision")).toBe(true);
+
+      expect(await totals()).toMatchObject({ item_count: 1, total_cents: 1500 });
+
+      const closed = await get<TicketBody>(`${portalUrl}/tickets/${ticket.id}`);
+      expect(closed.body.status).toBe("closed");
+      expect(closed.body.outcome).toBe("data_fixed");
+
+      // The approval keeps what ran and the rows as they were, so it can be undone.
+      const after = await get<{ approvals: ApprovalBody[] }>(
+        `${portalUrl}/tickets/${ticket.id}/approvals`,
+      );
+      expect(after.body.approvals[0]).toMatchObject({
+        decision: "approve",
+        result: { ran: true, rowCount: 1, table: "shoplite.cart_totals" },
+      });
+      expect(after.body.approvals[0]?.executedAt).not.toBeNull();
+    } finally {
+      await portal.close();
+    }
+  });
+
+  it("runs the Reviewer's own statement when they edit the Proposal", async () => {
+    const [portal, portalUrl] = await startApi(proposing());
+    try {
+      const ticket = await openAndWait(portalUrl);
+      const edited = {
+        kind: "data_fix",
+        statement: "update",
+        table: "shoplite.cart_totals",
+        sql: `UPDATE shoplite.cart_totals SET item_count = 2, total_cents = 2500 WHERE cart_id = '${cartId}'`,
+        reason: "Two lines, not one",
+        matchingRows: 1,
+        executed: false,
       };
-      yield { type: "message", text: "Applying the approved fix" };
+
+      const decided = await post(`${portalUrl}/tickets/${ticket.id}/decision`, {
+        decision: "edit",
+        proposal: edited,
+      });
+      expect(decided.status).toBe(202);
+      await streamUntil(`${portalUrl}/tickets/${ticket.id}/events`, isClosed);
+
+      expect(await totals()).toMatchObject({ item_count: 2, total_cents: 2500 });
+    } finally {
+      await portal.close();
+    }
+  });
+
+  it("changes nothing when the Reviewer rejects, and the agent is told why", async () => {
+    const [portal, portalUrl] = await startApi(proposing());
+    try {
+      const ticket = await openAndWait(portalUrl);
+      const before = await totals();
+
+      const decided = await post(`${portalUrl}/tickets/${ticket.id}/decision`, {
+        decision: "reject",
+        reason: "That is the wrong cart",
+      });
+      expect(decided.status).toBe(202);
+
+      const frames = await streamUntil(`${portalUrl}/tickets/${ticket.id}/events`, isClosed);
+      const decision = frames.find((frame) => frame.data.type === "decision");
+      expect(decision?.data.payload).toMatchObject({
+        decision: "reject",
+        reason: "That is the wrong cart",
+      });
+
+      expect(await totals()).toEqual(before);
+      const closed = await get<TicketBody>(`${portalUrl}/tickets/${ticket.id}`);
+      expect(closed.body.outcome).toBe("escalated");
+      expect(closed.body.rootCause).toContain("wrong cart");
+    } finally {
+      await portal.close();
+    }
+  });
+
+  it("refuses a second Decision on the same Proposal, and one on a Ticket that is not waiting", async () => {
+    const [portal, portalUrl] = await startApi(proposing());
+    try {
+      const ticket = await openAndWait(portalUrl);
+      await post(`${portalUrl}/tickets/${ticket.id}/decision`, { decision: "approve" });
+
+      const again = await post<ErrorBody>(`${portalUrl}/tickets/${ticket.id}/decision`, {
+        decision: "approve",
+      });
+      expect(again.status).toBe(409);
+
+      await streamUntil(`${portalUrl}/tickets/${ticket.id}/events`, isClosed);
+      const settled = await post<ErrorBody>(`${portalUrl}/tickets/${ticket.id}/decision`, {
+        decision: "approve",
+      });
+      expect(settled.status).toBe(409);
+    } finally {
+      await portal.close();
+    }
+  });
+
+  it("refuses a Decision the action's policy does not allow, and one with no reason", async () => {
+    const [portal, portalUrl] = await startApi(proposing());
+    try {
+      const ticket = await openAndWait(portalUrl);
+
+      const noReason = await post<ErrorBody>(`${portalUrl}/tickets/${ticket.id}/decision`, {
+        decision: "reject",
+      });
+      expect(noReason.status).toBe(400);
+
+      const noProposal = await post<ErrorBody>(`${portalUrl}/tickets/${ticket.id}/decision`, {
+        decision: "edit",
+      });
+      expect(noProposal.status).toBe(400);
+    } finally {
+      await portal.close();
+    }
+  });
+});
+
+describe("a Verdict the approval records do not support", () => {
+  /** Claims the data was fixed without ever proposing one, which no run should do. */
+  const boastfulResolver: TicketResolver = {
+    name: "boastful",
+    async *resolve(): AsyncIterable<ResolverEvent> {
       yield {
         type: "verdict",
         verdict: {
           outcome: "data_fixed",
           category: "data_issue",
-          confidence: 0.9,
-          rootCause: "The cart total was never updated when the item was removed",
+          confidence: 0.95,
+          rootCause: "The cart total was stale.",
           evidence: [],
           reply: "We have corrected your cart total.",
         },
       };
     },
+    resume: neverResumed,
   };
 
-  it("waits at awaiting approval, then acts, then closes", async () => {
-    const [portal, portalUrl] = await startApi(interruptingResolver);
+  it("escalates rather than telling the Reporter something was corrected", async () => {
+    const [portal, portalUrl] = await startApi(boastfulResolver);
     try {
       const created = await post<TicketBody>(`${portalUrl}/tickets`, {
         source: "tester",
         title: "Cart total wrong",
-        body: "Removing an item leaves the badge stale",
+        body: "Stale badge",
       });
-
-      const frames = await streamUntil(`${portalUrl}/tickets/${created.body.id}/events`, isClosed);
-
-      expect(
-        frames.filter((f) => f.data.type === "status").map((frame) => frame.data.payload.status),
-      ).toEqual(["investigating", "awaiting_approval", "acting", "closed"]);
+      await streamUntil(`${portalUrl}/tickets/${created.body.id}/events`, isClosed);
 
       const closed = await get<TicketBody>(`${portalUrl}/tickets/${created.body.id}`);
-      expect(closed.body.outcome).toBe("data_fixed");
+      expect(closed.body.outcome).toBe("escalated");
+      expect(closed.body.rootCause).toContain("escalated rather than closed as fixed");
+      expect(closed.body.reply).toContain("member of the team");
     } finally {
       await portal.close();
     }

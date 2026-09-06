@@ -1,3 +1,4 @@
+import { ApprovalCard, DecidedApproval } from "../components/Approval";
 import {
   CategoryMark,
   Field,
@@ -13,9 +14,11 @@ import { grafanaTraceUrl, langfuseTraceUrl } from "../lib/links";
 import { linkProps } from "../lib/navigation";
 import type { Route } from "../lib/routes";
 import {
+  type Approval,
   confidenceLabel,
   type EvidenceReference,
   isRunning,
+  pendingApproval,
   shortId,
   type Ticket,
   type TimelineEntry,
@@ -37,12 +40,13 @@ export function TicketPage({
   config: PortalConfig | null;
   go: (route: Route) => void;
 }) {
-  const { ticket, entries, error } = useTicketPage(id);
+  const { ticket, entries, approvals, error, decide } = useTicketPage(id);
 
   if (error) return <Problem message={error} />;
   if (!ticket) return <p className="py-16 text-center text-[13px] text-muted">Loading…</p>;
 
   const running = isRunning(ticket);
+  const waiting = pendingApproval(approvals);
   return (
     <article>
       <a {...linkProps({ page: "tickets" }, go)} className="eyebrow inline-block hover:text-ink">
@@ -72,13 +76,20 @@ export function TicketPage({
         <Traces ticket={ticket} config={config} />
       </header>
 
+      {waiting && (
+        <div className="mt-6">
+          <ApprovalCard approval={waiting} onDecide={decide} />
+        </div>
+      )}
+
       <div className="mt-6 grid gap-8 lg:grid-cols-[minmax(0,1fr)_20rem]">
         <section>
           <h3 className="eyebrow mb-4">Timeline</h3>
           <Timeline entries={entries} running={running} />
         </section>
-        <aside className="lg:sticky lg:top-6 lg:self-start">
+        <aside className="space-y-6 lg:sticky lg:top-6 lg:self-start">
           <Resolution ticket={ticket} entries={entries} />
+          <Decisions approvals={approvals} />
         </aside>
       </div>
     </article>
@@ -182,6 +193,22 @@ function Resolution({ ticket, entries }: { ticket: Ticket; entries: TimelineEntr
             </ul>
           </Field>
         )}
+      </div>
+    </div>
+  );
+}
+
+/** What was already decided on this Ticket, and what running it did. */
+function Decisions({ approvals }: { approvals: Approval[] }) {
+  const decided = approvals.filter((approval) => approval.decision !== null);
+  if (decided.length === 0) return null;
+  return (
+    <div className="border border-rule bg-card">
+      <h3 className="eyebrow border-b border-rule px-4 py-3">Decisions</h3>
+      <div className="space-y-2 p-2">
+        {decided.map((approval) => (
+          <DecidedApproval key={approval.id} approval={approval} />
+        ))}
       </div>
     </div>
   );

@@ -1,14 +1,24 @@
 import { resolve as resolvePath } from "node:path";
 import { messageOf } from "@incident-resolver/shared";
 import { getConfig } from "@incident-resolver/shared/config";
+import type { Callbacks } from "@langchain/core/callbacks/manager";
+import type { ActionRequest, Decision } from "langchain";
 import { createCheckpointer } from "./checkpointer";
 import { parseArgs, readTicket } from "./cli-args";
+import { interruptsFor } from "./interrupts";
 import { createPromptClient, langfusePromptFetcher } from "./langfuse-prompts";
 import { createMcpClient } from "./mcp";
 import { createModels } from "./models";
 import { promptVersions, resolvePrompts } from "./prompts";
-import { createResolver, defaultThreadId, resolveTicket } from "./resolver";
+import {
+  createResolver,
+  freshThreadId,
+  type RunOutcome,
+  resolveTicket,
+  resumeTicket,
+} from "./resolver";
 import { startTracing, traceRun } from "./tracing";
+import { SEND_CUSTOMER_REPLY, type WriteEffects } from "./write-tools";
 
 /**
  * Runs the Resolver on one Ticket from the command line and prints the Verdict as JSON on
@@ -25,6 +35,32 @@ function requireEnv(name: string, why: string): string {
   if (!value) throw new Error(`${name} is not set; ${why}`);
   return value;
 }
+
+const NO_REVIEWER =
+  "There is no Reviewer on a command-line run, so this cannot be approved and nothing was " +
+  "changed. Put the statement you would have run in the Verdict's Evidence and escalate.";
+
+/**
+ * How a run with nobody watching answers the gate. A Reply is only logged here, so approving
+ * it writes nothing and lets the run finish; anything that would touch ShopLite data or GitHub
+ * is refused with a reason the Resolver can act on. Approving a write from a shell is exactly
+ * the thing the gate exists to prevent, so the portal is the only place it can happen.
+ */
+function unattended(request: ActionRequest): Decision {
+  if (request.name === SEND_CUSTOMER_REPLY) return { type: "approve" };
+  return { type: "reject", message: NO_REVIEWER };
+}
+
+/** Write effects for a run with no Reviewer: the Reply is logged, and nothing else runs. */
+const unattendedEffects: WriteEffects = {
+  async applyDataFix() {
+    return NO_REVIEWER;
+  },
+  async sendCustomerReply({ text }) {
+    log(`Reply (not delivered; delivery is a stub):\n${text}`);
+    return `The Reply was recorded as written: ${text}`;
+  },
+};
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
@@ -72,13 +108,31 @@ async function main(): Promise<void> {
     log(`MCP tools loaded: ${tools.map((tool) => tool.name).join(", ")}`);
 
     const models = createModels(config, openAiApiKey);
-    const resolver = createResolver({ config, models, tools, prompts, checkpointer });
-    const threadId = args.threadId ?? defaultThreadId(ticket);
+    const resolver = createResolver({
+      config,
+      models,
+      tools,
+      prompts,
+      checkpointer,
+      writeEffects: unattendedEffects,
+      interruptOn: interruptsFor(ticket),
+    });
+    const threadId = args.threadId ?? freshThreadId(ticket);
     log(`Resolving "${ticket.title}" on thread ${threadId} with ${config.models.resolver}`);
 
-    const report = await traceRun({ ticket, models: config.models, prompts }, (callbacks) =>
-      resolveTicket({ resolver, ticket, threadId, config, prompts, callbacks }),
-    );
+    const run = { resolver, ticket, threadId, config, prompts };
+    const trace = (go: (callbacks: Callbacks) => Promise<RunOutcome>) =>
+      traceRun({ ticket, models: config.models, prompts }, go);
+
+    let outcome = await trace((callbacks) => resolveTicket({ ...run, callbacks }));
+    while (outcome.status === "paused") {
+      const asked = outcome.proposals;
+      log(`The gate stopped the run at ${asked.map((proposal) => proposal.name).join(", ")}`);
+      outcome = await trace((callbacks) =>
+        resumeTicket({ ...run, callbacks }, asked.map(unattended)),
+      );
+    }
+    const { report } = outcome;
 
     const seconds = ((Date.now() - startedAt) / 1000).toFixed(1);
     log(
