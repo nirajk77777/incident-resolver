@@ -1,14 +1,15 @@
 import { fileURLToPath } from "node:url";
-import { createDb, loadConfig, runMigrations } from "@incident-resolver/shared";
-import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
+import { createDb, type Db, loadConfig, runMigrations } from "@incident-resolver/shared";
+import type { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 import type { MultiServerMCPClient } from "@langchain/mcp-adapters";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createCheckpointer } from "./checkpointer";
 import { readTicket } from "./cli-args";
 import { createMcpClient } from "./mcp";
 import { createModels } from "./models";
-import { createResolver, type Resolver, resolveTicket } from "./resolver";
+import { createResolver, defaultThreadId, type Resolver, resolveTicket } from "./resolver";
 import { DATA_INVESTIGATOR, TRIAGE } from "./subagents";
-import { startTracing, traceRun } from "./tracing";
+import { startTracing, type Tracing, traceRun } from "./tracing";
 
 // The first end-to-end agent slice, driven the way the CLI drives it. Needs `docker compose up`,
 // this repo's `pnpm db:migrate` and `pnpm seed:incidents`, ShopLite migrated and seeded, and
@@ -16,19 +17,21 @@ import { startTracing, traceRun } from "./tracing";
 // keys set too, each run lands in Langfuse under a session named after the Ticket id.
 
 const config = loadConfig();
-const keys = Boolean(process.env.OPENAI_API_KEY && process.env.COHERE_API_KEY);
+const openAiApiKey = process.env.OPENAI_API_KEY;
+const hasApiKeys = Boolean(openAiApiKey && process.env.COHERE_API_KEY);
 const fixture = (name: string) =>
   fileURLToPath(new URL(`../tickets/${name}.json`, import.meta.url));
 
-describe.skipIf(!keys)(
+describe.skipIf(!hasApiKeys)(
   "Resolver end to end",
   () => {
-    const admin = createDb(config.infra.databaseUrl);
-    const tracing = startTracing();
     const clients: MultiServerMCPClient[] = [];
+    let admin: Db;
+    let tracing: Tracing;
     let checkpointer: PostgresSaver;
 
     beforeAll(async () => {
+      admin = createDb(config.infra.databaseUrl);
       await runMigrations(admin);
       const articles = await admin.$client.query(
         "SELECT count(*)::int AS n FROM knowledge.help_articles",
@@ -45,63 +48,56 @@ describe.skipIf(!keys)(
           "Ava Chen has no declined payment: run a checkout with a card ending 0002 against ShopLite first",
         );
       }
-      checkpointer = PostgresSaver.fromConnString(config.infra.databaseUrl, { schema: "portal" });
-      await checkpointer.setup();
+      tracing = startTracing({
+        publicKey: process.env.LANGFUSE_PUBLIC_KEY,
+        secretKey: process.env.LANGFUSE_SECRET_KEY,
+        baseUrl: config.infra.langfuseBaseUrl,
+      });
+      checkpointer = await createCheckpointer(config);
     });
 
     afterAll(async () => {
       await Promise.all(clients.map((client) => client.close()));
       await checkpointer?.end();
-      await admin.$client.end();
-      await tracing.shutdown();
+      await admin?.$client.end();
+      await tracing?.shutdown();
     });
 
-    async function resolverFor(
-      name: string,
-    ): Promise<{ resolver: Resolver; ticket: Awaited<ReturnType<typeof readTicket>> }> {
+    async function run(name: string) {
       const ticket = await readTicket(fixture(name));
       const mcp = createMcpClient(ticket);
       clients.push(mcp);
       const tools = await mcp.getTools();
-      const resolver = createResolver({
-        config,
-        models: createModels(config),
-        tools,
-        checkpointer,
-      });
-      return { resolver, ticket };
+      const models = createModels(config, openAiApiKey as string);
+      const resolver: Resolver = createResolver({ config, models, tools, checkpointer });
+      const threadId = defaultThreadId(ticket);
+      return traceRun(ticket, config.models, (callbacks) =>
+        resolveTicket({ resolver, ticket, threadId, config, callbacks }),
+      );
     }
 
     it("answers the images-not-loading Ticket from the clear cache article without an Investigator", async () => {
-      const { resolver, ticket } = await resolverFor("images-not-loading");
-      const threadId = `${ticket.id}:${new Date().toISOString()}`;
-      const result = await traceRun(ticket, config.models, (callbacks) =>
-        resolveTicket({ resolver, ticket, threadId, config, callbacks }),
-      );
+      const report = await run("images-not-loading");
 
-      expect(result.verdict.outcome).toBe("answered");
-      expect(result.verdict.category).toBe("question");
-      expect(result.subagentsInvoked).toEqual([TRIAGE]);
-      expect(result.fastPath).toBe(true);
-      expect(result.triage?.helpArticleIds).toContain("40000000-0000-4000-8000-000000000001");
-      expect(result.verdict.reply).toMatch(/refresh|cache/i);
-      expect(result.warnings).toEqual([]);
+      expect(report.verdict.outcome).toBe("answered");
+      expect(report.verdict.category).toBe("question");
+      expect(report.subagentsInvoked).toEqual([TRIAGE]);
+      expect(report.fastPath).toBe(true);
+      expect(report.triage?.helpArticleIds).toContain("40000000-0000-4000-8000-000000000001");
+      expect(report.verdict.reply).toMatch(/refresh|cache/i);
+      expect(report.warnings).toEqual([]);
     });
 
     it("answers the declined-card Ticket from the payments table with a plain-language Reply", async () => {
-      const { resolver, ticket } = await resolverFor("declined-card");
-      const threadId = `${ticket.id}:${new Date().toISOString()}`;
-      const result = await traceRun(ticket, config.models, (callbacks) =>
-        resolveTicket({ resolver, ticket, threadId, config, callbacks }),
-      );
+      const report = await run("declined-card");
 
-      expect(result.verdict.outcome).toBe("answered");
-      expect(result.verdict.category).toBe("user_error");
-      expect(result.subagentsInvoked).toContain(DATA_INVESTIGATOR);
-      expect(result.fastPath).toBe(false);
-      expect(result.verdict.reply).toMatch(/declin/i);
-      expect(result.verdict.reply).not.toMatch(/shoplite\.payments|SELECT/);
-      expect(result.verdict.evidence.some((item) => /payments/i.test(item.provenance))).toBe(true);
+      expect(report.verdict.outcome).toBe("answered");
+      expect(report.verdict.category).toBe("user_error");
+      expect(report.subagentsInvoked).toContain(DATA_INVESTIGATOR);
+      expect(report.fastPath).toBe(false);
+      expect(report.verdict.reply).toMatch(/declin/i);
+      expect(report.verdict.reply).not.toMatch(/shoplite\.payments|SELECT/);
+      expect(report.verdict.evidence.some((item) => /payments/i.test(item.provenance))).toBe(true);
     });
   },
   300_000,

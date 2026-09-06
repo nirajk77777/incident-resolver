@@ -9,7 +9,11 @@ const triage = {
   hypothesis: "cache",
   confidence: 0.8,
   helpArticleIds: ["40000000-0000-4000-8000-000000000001"],
-  bestHelpArticle: null,
+  bestHelpArticle: {
+    id: "40000000-0000-4000-8000-000000000001",
+    title: "Product images or pages not loading: clear your cache and hard refresh",
+    body: "Hard refresh, then clear the cache.",
+  },
 };
 
 describe("isFastPath", () => {
@@ -21,6 +25,7 @@ describe("isFastPath", () => {
   it("falls through below the threshold, without an article, or for another Category", () => {
     expect(isFastPath({ ...triage, confidence: 0.59 }, 0.6)).toBe(false);
     expect(isFastPath({ ...triage, helpArticleIds: [] }, 0.6)).toBe(false);
+    expect(isFastPath({ ...triage, bestHelpArticle: null }, 0.6)).toBe(false);
     expect(isFastPath({ ...triage, category: "user_error" }, 0.6)).toBe(false);
   });
 });

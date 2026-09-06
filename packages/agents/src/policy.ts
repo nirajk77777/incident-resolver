@@ -14,6 +14,7 @@ export function isFastPath(triage: Triage, confidenceThreshold: number): boolean
   return (
     triage.category === "question" &&
     triage.helpArticleIds.length > 0 &&
+    triage.bestHelpArticle !== null &&
     triage.confidence >= confidenceThreshold
   );
 }

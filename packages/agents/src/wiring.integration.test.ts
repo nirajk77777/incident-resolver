@@ -1,7 +1,7 @@
 import { createDb, loadConfig, runMigrations, type Ticket } from "@incident-resolver/shared";
-import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 import type { MultiServerMCPClient } from "@langchain/mcp-adapters";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createCheckpointer } from "./checkpointer";
 import { createMcpClient } from "./mcp";
 import { createModels } from "./models";
 import { createResolver } from "./resolver";
@@ -13,7 +13,7 @@ import { dataInvestigatorToolNames, selectTools, triageToolNames } from "./subag
 // No model is called and no embedding is made: this proves the Resolver can be assembled the
 // way the CLI assembles it. The MCP servers start with whatever keys the shell has, or with
 // placeholders, since mcp-incidents only checks that COHERE_API_KEY is present and ChatOpenAI
-// only checks that OPENAI_API_KEY is present until the first call.
+// does not use its key until the first call.
 
 const config = loadConfig();
 const ava = { id: "00000000-0000-4000-8000-000000000001", email: "ava.chen@example.com" };
@@ -26,11 +26,8 @@ const customerTicket: Ticket = {
   body: "Money not deducted.",
 };
 
-const env = {
-  ...process.env,
-  COHERE_API_KEY: process.env.COHERE_API_KEY ?? "placeholder-for-wiring-test",
-  OPENAI_API_KEY: process.env.OPENAI_API_KEY ?? "placeholder-for-wiring-test",
-};
+const placeholderKey = "placeholder-for-wiring-test";
+const env = { ...process.env, COHERE_API_KEY: process.env.COHERE_API_KEY ?? placeholderKey };
 
 describe("Resolver wiring", () => {
   const admin = createDb(config.infra.databaseUrl);
@@ -97,34 +94,24 @@ describe("Resolver wiring", () => {
   });
 
   it("assembles the deep agent with a Postgres checkpointer in the portal schema", async () => {
-    const checkpointer = PostgresSaver.fromConnString(config.infra.databaseUrl, {
-      schema: "portal",
-    });
+    const checkpointer = await createCheckpointer(config);
     try {
-      await checkpointer.setup();
       const { rows } = await admin.$client.query<{ table_name: string }>(
         "SELECT table_name FROM information_schema.tables WHERE table_schema = 'portal' AND table_name LIKE 'checkpoint%' ORDER BY 1",
       );
       expect(rows.map((row) => row.table_name)).toContain("checkpoints");
 
-      const previous = process.env.OPENAI_API_KEY;
-      process.env.OPENAI_API_KEY = env.OPENAI_API_KEY;
-      try {
-        const resolver = createResolver({
-          config,
-          models: createModels(config),
-          tools: await mcp.getTools(),
-          checkpointer,
-        });
-        expect(resolver).toBeDefined();
-        const tuple = await checkpointer.getTuple({
-          configurable: { thread_id: `${customerTicket.id}:wiring` },
-        });
-        expect(tuple).toBeUndefined();
-      } finally {
-        if (previous === undefined) delete process.env.OPENAI_API_KEY;
-        else process.env.OPENAI_API_KEY = previous;
-      }
+      const resolver = createResolver({
+        config,
+        models: createModels(config, process.env.OPENAI_API_KEY ?? placeholderKey),
+        tools: await mcp.getTools(),
+        checkpointer,
+      });
+      expect(resolver).toBeDefined();
+      const tuple = await checkpointer.getTuple({
+        configurable: { thread_id: `${customerTicket.id}:wiring` },
+      });
+      expect(tuple).toBeUndefined();
     } finally {
       await checkpointer.end();
     }

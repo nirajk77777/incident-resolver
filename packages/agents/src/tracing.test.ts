@@ -29,7 +29,7 @@ describe("traceTags", () => {
 
 describe("startTracing", () => {
   it("stays disabled without Langfuse keys and still shuts down cleanly", async () => {
-    const tracing = startTracing({});
+    const tracing = startTracing({ baseUrl: "https://cloud.langfuse.com" });
     expect(tracing.enabled).toBe(false);
     await expect(tracing.shutdown()).resolves.toBeUndefined();
   });

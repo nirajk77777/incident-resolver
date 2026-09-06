@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { formatIssues } from "./errors";
 
 /**
  * All tunables live here and are read from the environment with defaults,
@@ -67,6 +68,8 @@ const configSchema = z
     TEMPO_URL: z.url().default("http://localhost:3200"),
     PROMETHEUS_URL: z.url().default("http://localhost:9090"),
     GRAFANA_URL: z.url().default("http://localhost:3000"),
+    // Langfuse Cloud by default; the keys are secrets and stay in the environment.
+    LANGFUSE_BASE_URL: z.url().default("https://cloud.langfuse.com"),
   })
   .transform((env) => ({
     models: {
@@ -103,6 +106,7 @@ const configSchema = z
       tempoUrl: env.TEMPO_URL,
       prometheusUrl: env.PROMETHEUS_URL,
       grafanaUrl: env.GRAFANA_URL,
+      langfuseBaseUrl: env.LANGFUSE_BASE_URL,
     },
   }));
 
@@ -126,10 +130,7 @@ function withoutBlanks(env: Env): Record<string, string> {
 export function loadConfig(env: Env = process.env): Config {
   const parsed = configSchema.safeParse(withoutBlanks(env));
   if (!parsed.success) {
-    const problems = parsed.error.issues
-      .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
-      .join("; ");
-    throw new ConfigError(`Invalid configuration: ${problems}`);
+    throw new ConfigError(`Invalid configuration: ${formatIssues(parsed.error)}`);
   }
   return parsed.data;
 }

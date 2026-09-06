@@ -1,21 +1,17 @@
-export { type CliArgs, parseArgs, readTicket, USAGE } from "./cli-args";
-export {
-  createMcpClient,
-  type McpServerName,
-  mcpConnections,
-  mcpPackageDir,
-  mcpServerNames,
-  type StdioConnection,
-} from "./mcp";
+export { createCheckpointer } from "./checkpointer";
+export { readTicket } from "./cli-args";
+export { createProcedureGuard, delegationRefusal, resolverSubagents } from "./guard";
+export { createMcpClient, type McpServerName, mcpServerNames } from "./mcp";
 export { createModels, type Models } from "./models";
 export { applyConfidencePolicy, ESCALATION_REPLY, isFastPath } from "./policy";
-export { loadPrompt, type PromptName, promptNames, promptsDir } from "./prompts";
+export { loadPrompt, type PromptName, promptNames } from "./prompts";
 export {
   createResolver,
+  defaultThreadId,
   type ResolveOptions,
   type Resolver,
   type ResolverOptions,
-  type RunResult,
+  type RunReport,
   renderTicket,
   resolveTicket,
 } from "./resolver";
@@ -29,13 +25,5 @@ export {
   type Triage,
   triageSchema,
 } from "./schemas";
-export {
-  createDataInvestigatorSubagent,
-  createTriageSubagent,
-  DATA_INVESTIGATOR,
-  dataInvestigatorToolNames,
-  selectTools,
-  TRIAGE,
-  triageToolNames,
-} from "./subagents";
-export { startTracing, type Tracing, traceRun, traceTags } from "./tracing";
+export { DATA_INVESTIGATOR, TRIAGE } from "./subagents";
+export { startTracing, type Tracing, type TracingOptions, traceRun, traceTags } from "./tracing";

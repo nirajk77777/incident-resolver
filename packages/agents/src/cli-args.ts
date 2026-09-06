@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { type Ticket, ticketSchema } from "@incident-resolver/shared";
+import { formatIssues, type Ticket, ticketSchema } from "@incident-resolver/shared";
 
 export const USAGE = "usage: pnpm resolve <ticket.json | -> [--thread <id>]";
 
@@ -39,10 +39,7 @@ export async function readTicket(path: string): Promise<Ticket> {
   }
   const parsed = ticketSchema.safeParse(json);
   if (!parsed.success) {
-    const problems = parsed.error.issues
-      .map((issue) => `${issue.path.join(".") || "ticket"}: ${issue.message}`)
-      .join("; ");
-    throw new Error(`${path} is not a valid Ticket: ${problems}`);
+    throw new Error(`${path} is not a valid Ticket: ${formatIssues(parsed.error)}`);
   }
   return parsed.data;
 }

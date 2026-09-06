@@ -28,8 +28,7 @@ const require = createRequire(import.meta.url);
 
 /** The directory of an MCP server package, found through its workspace dependency. */
 export function mcpPackageDir(name: McpServerName): string {
-  // The package's entry point is src/index.ts, so the package root is two levels up.
-  return dirname(dirname(require.resolve(packageNames[name])));
+  return dirname(require.resolve(`${packageNames[name]}/package.json`));
 }
 
 type Env = Record<string, string | undefined>;

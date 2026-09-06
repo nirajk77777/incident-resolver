@@ -36,6 +36,7 @@ describe("loadConfig", () => {
       tempoUrl: "http://localhost:3200",
       prometheusUrl: "http://localhost:9090",
       grafanaUrl: "http://localhost:3000",
+      langfuseBaseUrl: "https://cloud.langfuse.com",
     });
   });
 
@@ -66,6 +67,7 @@ describe("loadConfig", () => {
       TEMPO_URL: "http://lgtm:3200",
       PROMETHEUS_URL: "http://lgtm:9090",
       GRAFANA_URL: "http://lgtm:3000",
+      LANGFUSE_BASE_URL: "http://langfuse:3001",
     });
 
     expect(config.models).toEqual({
@@ -98,6 +100,7 @@ describe("loadConfig", () => {
       tempoUrl: "http://lgtm:3200",
       prometheusUrl: "http://lgtm:9090",
       grafanaUrl: "http://lgtm:3000",
+      langfuseBaseUrl: "http://langfuse:3001",
     });
   });
 

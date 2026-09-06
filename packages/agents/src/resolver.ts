@@ -5,6 +5,7 @@ import type { StructuredTool } from "@langchain/core/tools";
 import type { BaseCheckpointSaver } from "@langchain/langgraph";
 import { createDeepAgent } from "deepagents";
 import { toolStrategy } from "langchain";
+import { createProcedureGuard } from "./guard";
 import type { Models } from "./models";
 import { applyConfidencePolicy, isFastPath } from "./policy";
 import { loadPrompt } from "./prompts";
@@ -25,8 +26,16 @@ export type ResolverOptions = {
 };
 
 /**
+ * Graph steps a run may take before LangGraph stops it. Each model turn and each tool batch
+ * is one step; this slice needs about ten, so sixty leaves room for corrected SQL without
+ * letting a confused run loop until the wall-clock timeout in config.
+ */
+const RECURSION_LIMIT = 60;
+
+/**
  * The orchestrating deep agent. Triage and the Data Investigator are subagents reached through
- * the task tool; the run ends with a Verdict in the Zod response format.
+ * the task tool, the procedure guard keeps delegations in order, and the run ends with a
+ * Verdict in the Zod response format.
  */
 export function createResolver({ config, models, tools, checkpointer }: ResolverOptions) {
   return createDeepAgent({
@@ -37,6 +46,7 @@ export function createResolver({ config, models, tools, checkpointer }: Resolver
       createTriageSubagent({ model: models.triage, tools }),
       createDataInvestigatorSubagent({ model: models.investigator, tools }),
     ],
+    middleware: [createProcedureGuard(config.confidenceThreshold)],
     responseFormat: toolStrategy(verdictSchema),
     checkpointer,
   });
@@ -59,15 +69,21 @@ export function renderTicket(ticket: Ticket): string {
   return lines.filter((line) => line !== undefined).join("\n");
 }
 
-export type RunResult = {
+/** A fresh LangGraph thread per run: the Ticket id plus the start time, so a re-run never resumes an old one. */
+export function defaultThreadId(ticket: Ticket, now = new Date()): string {
+  return `${ticket.id}:${now.toISOString()}`;
+}
+
+/** What one Resolver run produced and did. */
+export type RunReport = {
   ticketId: string;
   threadId: string;
   verdict: Verdict;
   triage: Triage | undefined;
   subagentsInvoked: string[];
-  /** Answered from a Help article with no Investigator run. */
+  /** Answered from a Help article after Triage alone, with no Investigator run. */
   fastPath: boolean;
-  /** Ways the run departed from the procedure, for the operator rather than the Reporter. */
+  /** Ways the run departed from the procedure, for whoever runs the Resolver rather than the Reporter. */
   warnings: string[];
 };
 
@@ -80,15 +96,15 @@ export type ResolveOptions = {
   callbacks?: Callbacks;
 };
 
-/** Runs the Resolver on one Ticket and returns its Verdict with what the run did. */
-export async function resolveTicket(options: ResolveOptions): Promise<RunResult> {
+/** Runs the Resolver on one Ticket and reports its Verdict with what the run did. */
+export async function resolveTicket(options: ResolveOptions): Promise<RunReport> {
   const { resolver, ticket, threadId, config, callbacks } = options;
   const result = await resolver.invoke(
     { messages: [new HumanMessage(renderTicket(ticket))] },
     {
       configurable: { thread_id: threadId },
       callbacks,
-      recursionLimit: 60,
+      recursionLimit: RECURSION_LIMIT,
       signal: AbortSignal.timeout(config.runTimeoutMs),
     },
   );
@@ -100,14 +116,12 @@ export async function resolveTicket(options: ResolveOptions): Promise<RunResult>
   const verdict = applyConfidencePolicy(parsed.data, config.confidenceThreshold);
   const { triage, subagentsInvoked } = summarizeRun(result.messages);
   const investigated = subagentsInvoked.includes(DATA_INVESTIGATOR);
+  const qualifiedForFastPath =
+    triage !== undefined && isFastPath(triage, config.confidenceThreshold);
 
   const warnings: string[] = [];
-  if (triage === undefined)
+  if (triage === undefined) {
     warnings.push("The Resolver did not run Triage, or Triage returned no structured output");
-  if (triage && isFastPath(triage, config.confidenceThreshold) && investigated) {
-    warnings.push(
-      "Triage qualified for the fast path but the Resolver ran the Data Investigator anyway",
-    );
   }
   if (verdict.outcome !== parsed.data.outcome) {
     warnings.push(
@@ -121,7 +135,7 @@ export async function resolveTicket(options: ResolveOptions): Promise<RunResult>
     verdict,
     triage,
     subagentsInvoked,
-    fastPath: verdict.outcome === "answered" && !investigated,
+    fastPath: qualifiedForFastPath && !investigated && verdict.outcome === "answered",
     warnings,
   };
 }
