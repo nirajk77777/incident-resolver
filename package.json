@@ -9,6 +9,7 @@
     "pnpm": ">=10"
   },
   "scripts": {
+    "setup": "docker compose up -d --wait && pnpm install && pnpm db:migrate && pnpm seed:incidents",
     "dev": "pnpm -r --parallel --if-present dev",
     "infra:up": "docker compose up -d --wait",
     "infra:down": "docker compose down",
