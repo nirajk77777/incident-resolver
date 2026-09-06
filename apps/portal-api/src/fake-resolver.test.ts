@@ -42,6 +42,19 @@ const verdictOf = (events: ResolverEvent[]) => {
   return verdictSchema.parse(last?.type === "verdict" ? last.verdict : undefined);
 };
 
+/** Drains until the stream ends or throws, keeping what it managed to yield either way. */
+async function drainCatching(
+  stream: AsyncIterable<ResolverEvent>,
+  into: ResolverEvent[],
+): Promise<unknown> {
+  try {
+    for await (const event of stream) into.push(event);
+    return undefined;
+  } catch (error) {
+    return error;
+  }
+}
+
 async function collect(signal?: AbortSignal): Promise<ResolverEvent[]> {
   return drain(createFakeResolver().resolve({ ticket, run: 1, effects: spyEffects(), signal }));
 }
@@ -160,5 +173,43 @@ describe("the fake Resolver at the approval gate", () => {
     const verdict = verdictOf(events);
     expect(verdict.outcome).toBe("escalated");
     expect(verdict.rootCause).toContain("The wrong cart");
+  });
+});
+
+/**
+ * The two ways a run ends without a Verdict. The portal is what turns either into a closed,
+ * escalated Ticket; the fake's job is to be a Resolver that genuinely does these things, so
+ * that behaviour is exercised end to end rather than mocked.
+ */
+describe("a fake Resolver configured to fail", () => {
+  it("reports what it managed before it broke, then throws", async () => {
+    const broken = createFakeResolver({ fail: "the model went away" });
+    const events: ResolverEvent[] = [];
+
+    const thrown = await drainCatching(
+      broken.resolve({ ticket, run: 1, effects: spyEffects() }),
+      events,
+    );
+
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toBe("the model went away");
+    expect(events.map((event) => event.type)).toContain("subagent_start");
+    expect(events.some((event) => event.type === "verdict")).toBe(false);
+  });
+});
+
+describe("a fake Resolver configured to hang", () => {
+  it("waits until its run is abandoned, and never reaches a Verdict", async () => {
+    const hanging = createFakeResolver({ hang: true });
+    const signal = AbortSignal.timeout(50);
+    const events: ResolverEvent[] = [];
+
+    const thrown = await drainCatching(
+      hanging.resolve({ ticket, run: 1, effects: spyEffects(), signal }),
+      events,
+    );
+
+    expect(thrown).toBeInstanceOf(Error);
+    expect(events.some((event) => event.type === "verdict")).toBe(false);
   });
 });

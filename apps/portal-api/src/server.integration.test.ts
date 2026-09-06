@@ -1,11 +1,19 @@
 import { randomUUID } from "node:crypto";
-import { createDb, type Db, loadConfig, tickets } from "@incident-resolver/shared";
+import type { NewIncident } from "@incident-resolver/mcp-incidents";
+import {
+  createDb,
+  type Db,
+  ESCALATION_REPLY,
+  loadConfig,
+  tickets,
+} from "@incident-resolver/shared";
 import { inArray } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createFakeResolver, FAKE_VERDICT } from "./fake-resolver";
+import { type IncidentWriter, noIncidents } from "./incidents";
 import type { ResolverEvent, TicketResolver } from "./resolver";
-import { createPortalApi } from "./server";
+import { createPortalApi, type PortalApiOptions } from "./server";
 import type { TicketRecord } from "./store";
 
 // Needs `docker compose up` and `pnpm db:migrate`. Run with `pnpm test:integration`.
@@ -24,6 +32,14 @@ const opened: string[] = [];
 type TicketBody = Omit<TicketRecord, "createdAt" | "closedAt"> & {
   createdAt: string;
   closedAt: string | null;
+};
+
+/** What a Reviewer writes to finish an escalated Ticket. */
+const written = {
+  rootCause: "The payment gateway timed out and left the order half-written.",
+  resolution: "Deleted the orphaned order row and asked the Reporter to check out again.",
+  reply: "Sorry about that. The stuck order is cleared, please try again.",
+  author: "Priya",
 };
 
 type ErrorBody = { error: string; message?: string };
@@ -134,9 +150,23 @@ function openTicket(reporterEmail: string, title = "Checkout failed") {
   });
 }
 
+/** The Incidents a portal wrote, kept in memory so a test can read what a close left behind. */
+function recordingIncidents(): IncidentWriter & { written: NewIncident[] } {
+  const written: NewIncident[] = [];
+  return {
+    written,
+    async write(incident) {
+      written.push(incident);
+    },
+  };
+}
+
 /** A listening portal on a free port, and where to reach it. */
-async function startApi(resolver: TicketResolver): Promise<[FastifyInstance, string]> {
-  const started = createPortalApi({ db, config, resolver });
+async function startApi(
+  resolver: TicketResolver,
+  overrides: Partial<PortalApiOptions> = {},
+): Promise<[FastifyInstance, string]> {
+  const started = createPortalApi({ db, config, resolver, incidents: noIncidents, ...overrides });
   await started.listen({ port: 0, host: "127.0.0.1" });
   const address = started.server.address();
   if (address === null || typeof address === "string") throw new Error("No port");
@@ -706,6 +736,393 @@ describe("a Verdict the approval records do not support", () => {
       expect(closed.body.outcome).toBe("escalated");
       expect(closed.body.rootCause).toContain("escalated rather than closed as fixed");
       expect(closed.body.reply).toContain("member of the team");
+    } finally {
+      await portal.close();
+    }
+  });
+});
+
+describe("a Verdict the portal will not take at face value", () => {
+  /** A confident-sounding answer the Resolver was not actually confident about. */
+  const unsure = (confidence: number): TicketResolver => ({
+    name: "unsure",
+    async *resolve(): AsyncIterable<ResolverEvent> {
+      yield { type: "verdict", verdict: { ...FAKE_VERDICT, confidence } };
+    },
+    resume: neverResumed,
+  });
+
+  it("escalates below the Confidence threshold, keeping the Evidence and swapping the Reply", async () => {
+    const incidents = recordingIncidents();
+    const [portal, url] = await startApi(unsure(config.confidenceThreshold - 0.3), { incidents });
+    try {
+      const created = await post<TicketBody>(`${url}/tickets`, {
+        source: "tester",
+        title: "Checkout failed",
+        body: "My card was refused",
+      });
+      const frames = await streamUntil(`${url}/tickets/${created.body.id}/events`, isClosed);
+
+      // The run said why, so a Reviewer reading the timeline sees the rule that fired.
+      expect(frames.find((frame) => frame.data.type === "message")?.data.payload).toMatchObject({
+        reason: "below_confidence_threshold",
+      });
+      // Every piece of Evidence the run gathered is still on the timeline for the human.
+      const verdict = frames.find((frame) => frame.data.type === "verdict");
+      expect(verdict?.data.payload.evidence).toEqual(FAKE_VERDICT.evidence);
+
+      const closed = await get<TicketBody>(`${url}/tickets/${created.body.id}`);
+      expect(closed.body.outcome).toBe("escalated");
+      expect(closed.body.reply).toContain("member of the team");
+      expect(closed.body.rootCause).toBe(FAKE_VERDICT.rootCause);
+      // Nobody has resolved it, which is what leaves it waiting for a person.
+      expect(closed.body.resolvedBy).toBeNull();
+      expect(incidents.written).toEqual([]);
+    } finally {
+      await portal.close();
+    }
+  });
+
+  it("writes the Incident a Ticket the Resolver did settle leaves behind, marked resolved by agent", async () => {
+    const incidents = recordingIncidents();
+    const [portal, url] = await startApi(unsure(0.95), { incidents });
+    try {
+      const created = await post<TicketBody>(`${url}/tickets`, {
+        source: "tester",
+        title: "Checkout failed",
+        body: "My card was refused",
+      });
+      await streamUntil(`${url}/tickets/${created.body.id}/events`, isClosed);
+
+      expect(incidents.written).toHaveLength(1);
+      expect(incidents.written[0]).toMatchObject({
+        title: "Checkout failed",
+        rootCause: FAKE_VERDICT.rootCause,
+        category: FAKE_VERDICT.category,
+        sourceTicketId: created.body.id,
+        resolvedBy: "agent",
+        author: "Resolver",
+      });
+      // Derived from the Verdict, so the Evidence the run gathered is what a search matches on.
+      expect(incidents.written[0]?.symptoms).toContain(FAKE_VERDICT.evidence[0]?.fact);
+
+      const closed = await get<TicketBody>(`${url}/tickets/${created.body.id}`);
+      expect(closed.body.resolvedBy).toBe("agent");
+      expect(closed.body.resolution).toContain(FAKE_VERDICT.reply);
+    } finally {
+      await portal.close();
+    }
+  });
+});
+
+describe("resolving an escalated Ticket by hand", () => {
+  /**
+   * A Resolver that gives up, which is what puts the manual resolution form on the Ticket. It
+   * ends the way an escalating run does: the Outcome, and the holding message the Reporter
+   * reads until a person writes them a real one.
+   */
+  const givesUp: TicketResolver = {
+    name: "gives-up",
+    async *resolve(): AsyncIterable<ResolverEvent> {
+      yield {
+        type: "verdict",
+        verdict: {
+          ...FAKE_VERDICT,
+          outcome: "escalated",
+          confidence: 0.2,
+          reply: ESCALATION_REPLY,
+        },
+      };
+    },
+    resume: neverResumed,
+  };
+
+  /** An escalated Ticket on a portal of this test's own, and the Incidents it writes. */
+  async function escalatedTicket() {
+    const incidents = recordingIncidents();
+    const [portal, url] = await startApi(givesUp, { incidents });
+    const created = await post<TicketBody>(`${url}/tickets`, {
+      source: "customer",
+      reporterEmail: reporter("escalated"),
+      title: "Checkout failed",
+      body: "My card was refused at checkout",
+    });
+    await streamUntil(`${url}/tickets/${created.body.id}/events`, isClosed);
+    return { portal, url, id: created.body.id, incidents };
+  }
+
+  it("closes the Ticket on what the Reviewer wrote and writes their Incident", async () => {
+    const { portal, url, id, incidents } = await escalatedTicket();
+    try {
+      const resolved = await post<TicketBody>(`${url}/tickets/${id}/resolution`, written);
+
+      expect(resolved.status).toBe(200);
+      expect(resolved.body).toMatchObject({
+        status: "closed",
+        // Escalation is how this Ticket ended; a person finishing it does not change that.
+        outcome: "escalated",
+        reply: written.reply,
+        rootCause: written.rootCause,
+        resolution: written.resolution,
+        resolvedBy: "human",
+      });
+
+      expect(incidents.written).toHaveLength(1);
+      expect(incidents.written[0]).toMatchObject({
+        title: "Checkout failed",
+        rootCause: written.rootCause,
+        resolution: written.resolution,
+        sourceTicketId: id,
+        resolvedBy: "human",
+        author: "Priya",
+      });
+    } finally {
+      await portal.close();
+    }
+  });
+
+  it("puts what the person found on the timeline, on the run that gave up", async () => {
+    const { portal, url, id } = await escalatedTicket();
+    try {
+      await post<TicketBody>(`${url}/tickets/${id}/resolution`, written);
+
+      const entries = await streamUntil(
+        `${url}/tickets/${id}/events`,
+        (frame) => frame.data.payload.reason === "manual_resolution",
+      );
+      const manual = entries.at(-1);
+      expect(manual?.data.run).toBe(1);
+      expect(manual?.data.payload).toMatchObject({
+        reason: "manual_resolution",
+        rootCause: written.rootCause,
+        resolution: written.resolution,
+        author: "Priya",
+      });
+    } finally {
+      await portal.close();
+    }
+  });
+
+  it("is what the Reporter reads on the storefront in place of the holding message", async () => {
+    const reporterEmail = reporter("holding");
+    const incidents = recordingIncidents();
+    const [portal, url] = await startApi(givesUp, { incidents });
+    try {
+      const created = await post<TicketBody>(`${url}/tickets`, {
+        source: "customer",
+        reporterEmail,
+        title: "Checkout failed",
+        body: "My card was refused at checkout",
+      });
+      await streamUntil(`${url}/tickets/${created.body.id}/events`, isClosed);
+
+      const holding = await get<{ tickets: Array<{ reply: string | null }> }>(
+        `${url}/reporters/${encodeURIComponent(reporterEmail)}/tickets`,
+      );
+      expect(holding.body.tickets[0]?.reply).toContain("member of the team");
+
+      await post<TicketBody>(`${url}/tickets/${created.body.id}/resolution`, written);
+      const answered = await get<{ tickets: Array<{ reply: string | null }> }>(
+        `${url}/reporters/${encodeURIComponent(reporterEmail)}/tickets`,
+      );
+      expect(answered.body.tickets[0]?.reply).toBe(written.reply);
+    } finally {
+      await portal.close();
+    }
+  });
+
+  it("takes it only once, and only from a Ticket an escalation left waiting", async () => {
+    const { portal, url, id } = await escalatedTicket();
+    try {
+      await post<TicketBody>(`${url}/tickets/${id}/resolution`, written);
+      const again = await post<ErrorBody>(`${url}/tickets/${id}/resolution`, written);
+      expect(again.status).toBe(409);
+
+      // A Ticket the Resolver settled is nobody's to resolve by hand.
+      const settled = await openTicket(reporter("settled"));
+      await streamUntil(`/tickets/${settled.body.id}/events`, isClosed);
+      const refused = await post<ErrorBody>(`/tickets/${settled.body.id}/resolution`, written);
+      expect(refused.status).toBe(409);
+    } finally {
+      await portal.close();
+    }
+  });
+
+  it("refuses a resolution with a field missing: a blank Incident teaches nothing", async () => {
+    const { portal, url, id } = await escalatedTicket();
+    try {
+      const empty = await post<ErrorBody>(`${url}/tickets/${id}/resolution`, {
+        ...written,
+        resolution: "",
+      });
+      expect(empty.status).toBe(400);
+      expect(empty.body.message).toMatch(/resolution/);
+    } finally {
+      await portal.close();
+    }
+  });
+
+  it("is a 404 for a Ticket that does not exist", async () => {
+    const missing = await post<ErrorBody>(
+      "/tickets/00000000-0000-4000-8000-0000000000ff/resolution",
+      written,
+    );
+    expect(missing.status).toBe(404);
+  });
+});
+
+describe("re-running a Ticket", () => {
+  it("starts the next run on the same Ticket, leaving the earlier one on the timeline", async () => {
+    const created = await openTicket(reporter("rerun"));
+    const first = await streamUntil(`/tickets/${created.body.id}/events`, isClosed);
+    expect(first.every((frame) => frame.data.run === 1)).toBe(true);
+
+    const restarted = await post<TicketBody>(`/tickets/${created.body.id}/rerun`, {});
+    expect(restarted.status).toBe(202);
+    // Reopened: a Ticket cannot be closed and running at once, so the last run's Outcome goes.
+    expect(restarted.body).toMatchObject({ status: "new", outcome: null, reply: null });
+
+    // The stream picks up where the first run left off, and the new entries say which run.
+    const second = await streamUntil(
+      `/tickets/${created.body.id}/events?lastEventId=${first.at(-1)?.id}`,
+      isClosed,
+    );
+    expect(second.every((frame) => frame.data.run === 2)).toBe(true);
+
+    const whole = await streamUntil(
+      `/tickets/${created.body.id}/events`,
+      (frame) => frame.id === second.at(-1)?.id,
+    );
+    expect(new Set(whole.map((frame) => frame.data.run))).toEqual(new Set([1, 2]));
+
+    const closed = await get<TicketBody>(`/tickets/${created.body.id}`);
+    expect(closed.body.status).toBe("closed");
+    expect(closed.body.outcome).toBe("answered");
+  });
+
+  it("refuses to re-run a Ticket a person resolved: their answer is not a run's to replace", async () => {
+    const incidents = recordingIncidents();
+    const [portal, url] = await startApi(
+      {
+        name: "gives-up",
+        async *resolve(): AsyncIterable<ResolverEvent> {
+          yield {
+            type: "verdict",
+            verdict: { ...FAKE_VERDICT, outcome: "escalated", reply: ESCALATION_REPLY },
+          };
+        },
+        resume: neverResumed,
+      },
+      { incidents },
+    );
+    try {
+      const created = await post<TicketBody>(`${url}/tickets`, {
+        source: "tester",
+        title: "Cart total wrong",
+        body: "Stale badge",
+      });
+      await streamUntil(`${url}/tickets/${created.body.id}/events`, isClosed);
+      await post<TicketBody>(`${url}/tickets/${created.body.id}/resolution`, written);
+
+      const refused = await post<ErrorBody>(`${url}/tickets/${created.body.id}/rerun`, {});
+      expect(refused.status).toBe(409);
+      expect(refused.body.message).toContain("A person resolved this Ticket");
+      // What they wrote is still on the Ticket and still in the knowledge base.
+      const still = await get<TicketBody>(`${url}/tickets/${created.body.id}`);
+      expect(still.body.reply).toBe(written.reply);
+      expect(incidents.written).toHaveLength(1);
+    } finally {
+      await portal.close();
+    }
+  });
+
+  it("refuses to re-run a Ticket that is still going: one run at a time writes the row", async () => {
+    const created = await openTicket(reporter("still-running"));
+    const refused = await post<ErrorBody>(`/tickets/${created.body.id}/rerun`, {});
+    expect(refused.status).toBe(409);
+    await streamUntil(`/tickets/${created.body.id}/events`, isClosed);
+  });
+
+  it("is a 404 for a Ticket that does not exist", async () => {
+    const missing = await post<ErrorBody>(
+      "/tickets/00000000-0000-4000-8000-0000000000ff/rerun",
+      {},
+    );
+    expect(missing.status).toBe(404);
+  });
+});
+
+describe("a run that never reaches a Verdict", () => {
+  /** The portal's own timeout, short enough that a hanging run is abandoned inside a test. */
+  const impatient = { ...config, runTimeoutMs: 300 };
+
+  it("closes as escalated with reason agent_error when the Resolver throws", async () => {
+    const [portal, url] = await startApi(createFakeResolver({ fail: "the model went away" }));
+    try {
+      const created = await post<TicketBody>(`${url}/tickets`, {
+        source: "tester",
+        title: "Cart total wrong",
+        body: "Stale badge",
+      });
+      const frames = await streamUntil(`${url}/tickets/${created.body.id}/events`, isClosed);
+
+      // Everything the run did manage to report is still there for the person picking it up.
+      expect(frames.map((frame) => frame.data.type)).toContain("subagent_start");
+      const failure = frames.find((frame) => frame.data.payload.reason === "agent_error");
+      expect(failure?.data.payload.text).toContain("the model went away");
+
+      const closed = await get<TicketBody>(`${url}/tickets/${created.body.id}`);
+      expect(closed.body).toMatchObject({ status: "closed", outcome: "escalated" });
+      expect(closed.body.reply).toContain("member of the team");
+      expect(closed.body.resolvedBy).toBeNull();
+    } finally {
+      await portal.close();
+    }
+  });
+
+  it("closes as escalated with reason agent_error when the Resolver hangs past the timeout", async () => {
+    const [portal, url] = await startApi(createFakeResolver({ hang: true }), { config: impatient });
+    try {
+      const created = await post<TicketBody>(`${url}/tickets`, {
+        source: "tester",
+        title: "Cart total wrong",
+        body: "Stale badge",
+      });
+      const frames = await streamUntil(`${url}/tickets/${created.body.id}/events`, isClosed);
+
+      const failure = frames.find((frame) => frame.data.payload.reason === "agent_error");
+      expect(failure).toBeDefined();
+
+      const closed = await get<TicketBody>(`${url}/tickets/${created.body.id}`);
+      expect(closed.body).toMatchObject({ status: "closed", outcome: "escalated" });
+      // A Ticket a person can now finish, rather than one stuck mid-investigation.
+      expect(closed.body.resolvedBy).toBeNull();
+    } finally {
+      await portal.close();
+    }
+  });
+
+  it("leaves a hung run resolvable by hand, which is the whole point of closing it", async () => {
+    const incidents = recordingIncidents();
+    const [portal, url] = await startApi(createFakeResolver({ hang: true }), {
+      config: impatient,
+      incidents,
+    });
+    try {
+      const created = await post<TicketBody>(`${url}/tickets`, {
+        source: "tester",
+        title: "Cart total wrong",
+        body: "Stale badge",
+      });
+      await streamUntil(`${url}/tickets/${created.body.id}/events`, isClosed);
+
+      const resolved = await post<TicketBody>(
+        `${url}/tickets/${created.body.id}/resolution`,
+        written,
+      );
+      expect(resolved.status).toBe(200);
+      expect(resolved.body.resolvedBy).toBe("human");
+      expect(incidents.written[0]).toMatchObject({ resolvedBy: "human" });
     } finally {
       await portal.close();
     }

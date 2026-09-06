@@ -1,3 +1,4 @@
+import { createCohereProviders, createKnowledgeStore } from "@incident-resolver/mcp-incidents";
 import {
   allowedDecisions,
   type Config,
@@ -5,14 +6,16 @@ import {
   type Decision,
   formatIssues,
   isApprovalAction,
+  manualResolutionSchema,
   newTicketSchema,
   reviewerDecisionSchema,
 } from "@incident-resolver/shared";
-import Fastify, { type FastifyInstance } from "fastify";
+import Fastify, { type FastifyBaseLogger, type FastifyInstance } from "fastify";
 import { z } from "zod";
 import { type ApprovalRecord, createApprovalStore } from "./approvals";
 import { createTicketEventBus } from "./bus";
 import { createDataFixRunner } from "./data-fix";
+import { createIncidentWriter, type IncidentWriter, noIncidents } from "./incidents";
 import type { TicketResolver } from "./resolver";
 import { createTicketRunner } from "./runner";
 import { noScores, type ScoreWriter } from "./scores";
@@ -34,11 +37,48 @@ export type PortalApiOptions = {
   resolver: TicketResolver;
   /** Where a Reviewer's Decisions and each Ticket's Outcome are scored. None by default. */
   scores?: ScoreWriter;
+  /**
+   * Where a closed Ticket's Incident is written, so the next similar Ticket finds it. Left out,
+   * one is built over the `knowledge` schema and Cohere.
+   */
+  incidents?: IncidentWriter;
+  /**
+   * Embeds the Incidents a close writes. A secret, so it comes from the environment rather than
+   * from config; without it nothing is written to the knowledge base and everything else runs.
+   */
+  cohereApiKey?: string | undefined;
   logger?: boolean;
 };
 
 const ticketIdSchema = z.object({ id: z.uuid() });
 const reporterSchema = z.object({ email: z.email() });
+
+type KnowledgeWriterOptions = {
+  db: Db;
+  config: Config;
+  cohereApiKey: string | undefined;
+  log: FastifyBaseLogger;
+};
+
+/**
+ * The Incident writer a portal builds for itself: the `knowledge` schema, embedded by the same
+ * Cohere model `mcp-incidents` indexes with, so what a close writes is found by the search the
+ * next Ticket's Historian runs. Without the key there is nothing to embed with, and a Ticket
+ * still closes; the portal says so once at startup rather than on every Ticket.
+ */
+function knowledgeWriter({
+  db,
+  config,
+  cohereApiKey,
+  log,
+}: KnowledgeWriterOptions): IncidentWriter {
+  if (!cohereApiKey) {
+    log.warn("COHERE_API_KEY is not set: closed Tickets will not be written to the knowledge base");
+    return noIncidents;
+  }
+  const { embedder } = createCohereProviders({ apiKey: cohereApiKey, models: config.models });
+  return createIncidentWriter({ store: createKnowledgeStore(db), embedder, log });
+}
 
 /**
  * An approval as the portal serves it. The snapshot of changed rows stays behind: it exists so
@@ -76,6 +116,8 @@ export function createPortalApi({
   config,
   resolver,
   scores = noScores,
+  incidents,
+  cohereApiKey = process.env.COHERE_API_KEY,
   logger = false,
 }: PortalApiOptions): FastifyInstance {
   // The portal holds SSE connections open for as long as a Ticket is watched, so shutdown
@@ -96,6 +138,8 @@ export function createPortalApi({
     resolver,
     effectsFor: (ticket, run) => effects(ticket.id, run),
     scores,
+    incidents: incidents ?? knowledgeWriter({ db, config, cohereApiKey, log: app.log }),
+    confidenceThreshold: config.confidenceThreshold,
     runTimeoutMs: config.runTimeoutMs,
     log: app.log,
   });
@@ -174,6 +218,48 @@ export function createPortalApi({
       return reply.code(result.status).send({ error, message: result.message });
     }
     return reply.code(202).send({ approval: approvalBody(result.approval) });
+  });
+
+  /**
+   * How a Reviewer finishes an escalated Ticket: the root cause, what fixed it, and the Reply
+   * the Reporter reads in place of the holding message. Submitting it writes the Incident, so
+   * the knowledge base learns from the Tickets the Resolver could not finish as well as from
+   * the ones it could.
+   */
+  app.post("/tickets/:id/resolution", async (request, reply) => {
+    const params = ticketIdSchema.safeParse(request.params);
+    if (!params.success) return reply.code(404).send({ error: "Not Found" });
+    const ticket = await store.getTicket(params.data.id);
+    if (!ticket) return reply.code(404).send({ error: "Not Found" });
+
+    const written = manualResolutionSchema.safeParse(request.body);
+    if (!written.success) {
+      return reply.code(400).send({ error: "Bad Request", message: formatIssues(written.error) });
+    }
+    const result = await runner.resolve(ticket, written.data);
+    if (!result.ok) {
+      return reply.code(result.status).send({ error: "Conflict", message: result.message });
+    }
+    return result.ticket;
+  });
+
+  /**
+   * Runs a closed Ticket again. The new run gets the next run number and its own thread, so
+   * nothing it does can reach the checkpoint the last one left; the Timeline keeps both,
+   * labelled by run. This answers as soon as the Ticket is reopened, and what the run then
+   * does arrives on the timeline like everything else.
+   */
+  app.post("/tickets/:id/rerun", async (request, reply) => {
+    const params = ticketIdSchema.safeParse(request.params);
+    if (!params.success) return reply.code(404).send({ error: "Not Found" });
+    const ticket = await store.getTicket(params.data.id);
+    if (!ticket) return reply.code(404).send({ error: "Not Found" });
+
+    const result = await runner.rerun(ticket);
+    if (!result.ok) {
+      return reply.code(result.status).send({ error: "Conflict", message: result.message });
+    }
+    return reply.code(202).send(result.ticket);
   });
 
   /** What the storefront's "My tickets" page reads: one Reporter's Tickets and their Replies. */

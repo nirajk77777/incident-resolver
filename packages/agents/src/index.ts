@@ -1,6 +1,11 @@
 export { createCheckpointer } from "./checkpointer";
 export { readTicket } from "./cli-args";
 export {
+  createEscalationTool,
+  ESCALATE_TO_HUMAN,
+  escalationRequested,
+} from "./escalate";
+export {
   createProcedureGuard,
   delegationRefusal,
   type Procedure,
@@ -17,10 +22,12 @@ export {
 export { createMcpClient, type McpServerName, mcpServerNames } from "./mcp";
 export { createModels, type Models } from "./models";
 export {
-  applyConfidencePolicy,
+  type Ending,
+  endingWarnings,
   investigationWarnings,
   isFastPath,
   ranInParallel,
+  settleVerdict,
 } from "./policy";
 export {
   loadPrompt,

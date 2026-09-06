@@ -13,9 +13,16 @@ import {
   workspaceBackend,
   workspaceClosed,
 } from "./code-rca";
+import { createEscalationTool, escalationRequested } from "./escalate";
 import { createProcedureGuard } from "./guard";
 import type { Models } from "./models";
-import { applyConfidencePolicy, investigationWarnings, isFastPath, ranInParallel } from "./policy";
+import {
+  endingWarnings,
+  investigationWarnings,
+  isFastPath,
+  ranInParallel,
+  settleVerdict,
+} from "./policy";
 import { type Prompts, promptVersions } from "./prompts";
 import { summarizeRun } from "./run-summary";
 import type { Triage } from "./schemas";
@@ -67,7 +74,8 @@ const RECURSION_LIMIT = 60;
  *
  * The Resolver's own tools are the writes, and every one of them is behind the gate: the graph
  * interrupts before the tool runs, and only a Reviewer's Decision lets it through. The
- * checkpointer is what makes that possible, since a paused thread is resumed from it.
+ * checkpointer is what makes that possible, since a paused thread is resumed from it. The one
+ * tool beside them is `escalate_to_human`, which writes nothing and so needs no Reviewer.
  */
 export function createResolver({
   config,
@@ -89,7 +97,7 @@ export function createResolver({
     name: "resolver",
     model: models.resolver,
     systemPrompt: prompts.text("resolver"),
-    tools: createWriteTools(writeEffects),
+    tools: [...createWriteTools(writeEffects), createEscalationTool()],
     interruptOn,
     // The Workspace is mounted on the agent's filesystem and closed to everyone here: Code RCA
     // declares its own permissions and is the only agent let in (ADR-0002). Without a Workspace
@@ -312,8 +320,12 @@ function reportFor(result: FinalState, options: ResolveOptions): RunReport {
   if (!parsed.success) {
     throw new Error(`The Resolver did not end with a Verdict: ${parsed.error.message}`);
   }
-  const verdict = applyConfidencePolicy(parsed.data, config.confidenceThreshold);
   const summary = summarizeRun(result.messages);
+  const ending = {
+    confidenceThreshold: config.confidenceThreshold,
+    escalationAsked: escalationRequested(result.messages),
+  };
+  const verdict = settleVerdict(parsed.data, ending);
   const { triage, subagentsInvoked } = summary;
   const investigated = investigators.some((name) => subagentsInvoked.includes(name));
   const qualifiedForFastPath =
@@ -324,11 +336,7 @@ function reportFor(result: FinalState, options: ResolveOptions): RunReport {
     warnings.push("The Resolver did not run Triage, or Triage returned no structured output");
   }
   warnings.push(...investigationWarnings(summary));
-  if (verdict.outcome !== parsed.data.outcome) {
-    warnings.push(
-      `Confidence ${verdict.confidence} is below the threshold ${config.confidenceThreshold}: outcome ${parsed.data.outcome} was escalated`,
-    );
-  }
+  warnings.push(...endingWarnings(parsed.data, verdict, ending));
 
   return {
     ticketId: ticket.id,

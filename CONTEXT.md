@@ -36,8 +36,15 @@ The ordered record of what a Run did to a Ticket: subagent starts and ends, tool
 _Avoid_: log, history, feed, audit trail
 
 **Incident**:
-The distilled record of a closed Ticket written to the knowledge base: symptoms, root cause, and what fixed it. Written for both agent-resolved and human-resolved tickets.
+The distilled record of a closed Ticket written to the knowledge base: symptoms, root cause, and what fixed it. Written for both agent-resolved and human-resolved Tickets, derived from the Verdict or from the Manual resolution rather than by another model call. One Ticket has one Incident: re-running it, or resolving it by hand, replaces the record it wrote before. An escalated Ticket nobody has picked up has none.
 _Avoid_: ticket, case, past issue
+
+**Resolved by**:
+Who settled a Ticket: the agent, when the Resolver reached an Outcome, or a human, when a Reviewer finished an escalated one. An escalated Ticket waiting for a person is resolved by nobody, which is what puts the Manual resolution form on it.
+
+**Manual resolution**:
+What a Reviewer writes to finish an escalated Ticket: the root cause, what fixed it, and the Reply that replaces the holding message. It closes the Ticket and becomes an Incident. The Outcome stays `escalated` — that is how the Ticket ended — and only who resolved it changes.
+_Avoid_: manual close, human fix, override
 
 ### Investigation
 
@@ -70,7 +77,7 @@ The Resolver's structured final output for a Ticket: Outcome, Confidence, root c
 _Avoid_: result, report, summary
 
 **Escalation**:
-Handing a Ticket to a human because Confidence is too low or Evidence conflicts. The human's resolution still becomes an Incident.
+Handing a Ticket to a human. Three things cause one: the Resolver calling the escalate tool, a Verdict whose Confidence is below the threshold, and a Run that never reached a Verdict at all. The Ticket closes with Outcome `escalated`, the holding Reply, and every piece of Evidence the run gathered. The human's Manual resolution still becomes an Incident.
 
 ### Approvals
 

@@ -1,4 +1,10 @@
-import { ESCALATION_REPLY, type Verdict } from "@incident-resolver/shared";
+import {
+  applyConfidencePolicy,
+  belowThresholdReason,
+  escalated,
+  type Verdict,
+} from "@incident-resolver/shared";
+import { ESCALATE_TO_HUMAN } from "./escalate";
 import type { RunSummary } from "./run-summary";
 import type { Triage } from "./schemas";
 import { investigators } from "./subagents";
@@ -17,15 +23,35 @@ export function isFastPath(triage: Triage, confidenceThreshold: number): boolean
   );
 }
 
+/** The two things about a run's ending that are the portal's to decide, not the model's. */
+export type Ending = {
+  confidenceThreshold: number;
+  /** Why the run called `escalate_to_human`, or undefined when it never did. */
+  escalationAsked: string | undefined;
+};
+
 /**
- * Confidence below the threshold escalates, whatever the model wrote in `outcome`. The root
- * cause and Evidence are kept so the human picking it up sees what was found; the Reply is
- * swapped for the holding message because a confident-sounding answer below threshold must
- * not reach the Reporter.
+ * The Verdict a run actually ends with. A run that asked for a human gets one, and so does one
+ * whose Confidence is below the threshold: neither is the model's to overrule by writing a
+ * different Outcome afterwards. The root cause and the Evidence survive both, since they are
+ * what the person picking the Ticket up reads; only the Reply is swapped, because a
+ * confident-sounding answer nobody trusts must not reach the Reporter.
  */
-export function applyConfidencePolicy(verdict: Verdict, confidenceThreshold: number): Verdict {
-  if (verdict.outcome === "escalated" || verdict.confidence >= confidenceThreshold) return verdict;
-  return { ...verdict, outcome: "escalated", reply: ESCALATION_REPLY };
+export function settleVerdict(verdict: Verdict, ending: Ending): Verdict {
+  if (ending.escalationAsked !== undefined) {
+    return escalated(verdict, `The Resolver asked for a human: ${ending.escalationAsked}`);
+  }
+  return applyConfidencePolicy(verdict, ending.confidenceThreshold);
+}
+
+/** How a settled Verdict departed from what the model wrote, for whoever runs the Resolver. */
+export function endingWarnings(verdict: Verdict, settled: Verdict, ending: Ending): string[] {
+  if (settled.outcome === verdict.outcome) return [];
+  return [
+    ending.escalationAsked === undefined
+      ? belowThresholdReason(verdict, ending.confidenceThreshold)
+      : `The Resolver called ${ESCALATE_TO_HUMAN} and then returned ${verdict.outcome}: the Ticket was escalated`,
+  ];
 }
 
 /**

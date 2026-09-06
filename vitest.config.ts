@@ -22,6 +22,9 @@ export default defineConfig({
           name: "integration",
           include: [integrationGlob],
           exclude: [...configDefaults.exclude, worktreesGlob],
+          // One file at a time. These share one Postgres and one Cohere key, whose trial tier
+          // allows ten calls a minute; running the suites at once spends that in one burst.
+          fileParallelism: false,
           testTimeout: 30_000,
           hookTimeout: 60_000,
         },
