@@ -117,6 +117,19 @@ describe("cardFor", () => {
     expect(cardFor(entry("tool_call", {})).detail).toBeUndefined();
     expect(cardFor(entry("message", {})).detail).toBeUndefined();
   });
+
+  it("draws an internal note carrying a pull request as its own card, with the link", () => {
+    const card = cardFor(
+      entry("message", {
+        text: "Pull request opened on fix/ticket-1: https://github.com/n/s/pull/9",
+        reason: "pull_request",
+        url: "https://github.com/n/s/pull/9",
+      }),
+    );
+
+    expect(card.heading).toBe("Internal note");
+    expect(card.link).toBe("https://github.com/n/s/pull/9");
+  });
 });
 
 describe("preview", () => {

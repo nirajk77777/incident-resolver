@@ -6,6 +6,7 @@ import {
   ESCALATION_REPLY,
   loadConfig,
   tickets,
+  type Verdict,
 } from "@incident-resolver/shared";
 import { inArray } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
@@ -703,27 +704,19 @@ describe("the approval gate", () => {
 });
 
 describe("a Verdict the approval records do not support", () => {
-  /** Claims the data was fixed without ever proposing one, which no run should do. */
-  const boastfulResolver: TicketResolver = {
-    name: "boastful",
-    async *resolve(): AsyncIterable<ResolverEvent> {
-      yield {
-        type: "verdict",
-        verdict: {
-          outcome: "data_fixed",
-          category: "data_issue",
-          confidence: 0.95,
-          rootCause: "The cart total was stale.",
-          evidence: [],
-          reply: "We have corrected your cart total.",
-        },
-      };
-    },
-    resume: neverResumed,
-  };
+  /** Claims a write without ever proposing one, which no run should do. */
+  function boastfulResolver(verdict: Verdict): TicketResolver {
+    return {
+      name: "boastful",
+      async *resolve(): AsyncIterable<ResolverEvent> {
+        yield { type: "verdict", verdict };
+      },
+      resume: neverResumed,
+    };
+  }
 
-  it("escalates rather than telling the Reporter something was corrected", async () => {
-    const [portal, portalUrl] = await startApi(boastfulResolver);
+  async function closedAfter(resolver: TicketResolver): Promise<TicketBody> {
+    const [portal, portalUrl] = await startApi(resolver);
     try {
       const created = await post<TicketBody>(`${portalUrl}/tickets`, {
         source: "tester",
@@ -731,14 +724,44 @@ describe("a Verdict the approval records do not support", () => {
         body: "Stale badge",
       });
       await streamUntil(`${portalUrl}/tickets/${created.body.id}/events`, isClosed);
-
-      const closed = await get<TicketBody>(`${portalUrl}/tickets/${created.body.id}`);
-      expect(closed.body.outcome).toBe("escalated");
-      expect(closed.body.rootCause).toContain("escalated rather than closed as fixed");
-      expect(closed.body.reply).toContain("member of the team");
+      return (await get<TicketBody>(`${portalUrl}/tickets/${created.body.id}`)).body;
     } finally {
       await portal.close();
     }
+  }
+
+  it("escalates rather than telling the Reporter something was corrected", async () => {
+    const closed = await closedAfter(
+      boastfulResolver({
+        outcome: "data_fixed",
+        category: "data_issue",
+        confidence: 0.95,
+        rootCause: "The cart total was stale.",
+        evidence: [],
+        reply: "We have corrected your cart total.",
+      }),
+    );
+
+    expect(closed.outcome).toBe("escalated");
+    expect(closed.rootCause).toContain("escalated rather than closed as fixed");
+    expect(closed.reply).toContain("member of the team");
+  });
+
+  it("escalates rather than telling the Reporter a fix is on its way to a pull request", async () => {
+    const closed = await closedAfter(
+      boastfulResolver({
+        outcome: "fix_proposed",
+        category: "code_bug",
+        confidence: 0.95,
+        rootCause: "The discount is applied twice.",
+        evidence: [],
+        reply: "The bug is confirmed and a fix is underway.",
+      }),
+    );
+
+    expect(closed.outcome).toBe("escalated");
+    expect(closed.rootCause).toContain("escalated rather than closed as a fix proposed");
+    expect(closed.reply).toContain("member of the team");
   });
 });
 

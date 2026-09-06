@@ -17,6 +17,7 @@ describe("loadPrompt", () => {
       "data-investigator",
       "incident-historian",
       "code-rca",
+      "fix-shipper",
     ]);
     for (const name of promptNames) {
       const text = loadPrompt(name, { confidenceThreshold: 0.6 });

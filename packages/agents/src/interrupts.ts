@@ -11,9 +11,9 @@ import type { InterruptOnConfig } from "langchain";
  * Decisions a Reviewer may take, and raises a LangGraph interrupt before the tool runs; the
  * portal reads the Proposal off that interrupt and resumes the thread with the Decision.
  *
- * All three gated actions are configured, `create_pull_request` included, whose tool the Fix
- * Shipper brings with it: a write that arrives later is gated the day it arrives rather than the
- * day someone remembers to add it.
+ * All three gated actions are configured. `create_pull_request` is the Resolver's own, like the
+ * other two: the Fix Shipper pushes the branch, which nobody reads until it is proposed, and the
+ * pull request against ShopLite's default branch is the write a Reviewer holds (ADR-0003).
  */
 export const gatedTools: Record<ApprovalAction, InterruptOnConfig> = Object.fromEntries(
   approvalActions.map((action) => [action, { allowedDecisions: [...allowedDecisions[action]] }]),

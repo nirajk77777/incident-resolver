@@ -1,8 +1,14 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import type { Ticket } from "@incident-resolver/shared";
+import { loadConfig, type Ticket } from "@incident-resolver/shared";
 import { describe, expect, it } from "vitest";
-import { mcpConnections, mcpPackageDir, mcpServerNames } from "./mcp";
+import {
+  createMcpClient,
+  githubConnectionFor,
+  mcpConnections,
+  mcpPackageDir,
+  mcpServerNames,
+} from "./mcp";
 
 const customer: Ticket = {
   id: "50000000-0000-4000-8000-000000000002",
@@ -53,5 +59,46 @@ describe("mcpConnections", () => {
     const { database } = mcpConnections(customer, { EMPTY: undefined, KEEP: "1" });
     expect(database.env).not.toHaveProperty("EMPTY");
     expect(database.env?.KEEP).toBe("1");
+  });
+});
+
+const config = loadConfig();
+
+describe("githubConnectionFor", () => {
+  it("connects to the remote server with the token from the environment", () => {
+    const connection = githubConnectionFor(config.github, { GITHUB_TOKEN: "ghp_secret" });
+
+    expect(connection?.url).toBe(config.github.mcpUrl);
+    expect(connection?.headers?.Authorization).toBe("Bearer ghp_secret");
+  });
+
+  it("narrows the server to the repos and pull requests toolsets", () => {
+    const connection = githubConnectionFor(config.github, { GITHUB_TOKEN: "ghp_secret" });
+
+    expect(connection?.headers?.["X-MCP-Toolsets"]).toBe("repos,pull_requests");
+  });
+
+  it("is nothing without a token, so a portal with none still runs every Ticket", () => {
+    expect(githubConnectionFor(config.github, {})).toBeUndefined();
+    expect(githubConnectionFor(undefined, { GITHUB_TOKEN: "ghp_secret" })).toBeUndefined();
+  });
+});
+
+describe("createMcpClient", () => {
+  const servers = (client: ReturnType<typeof createMcpClient>) =>
+    Object.keys(client.config.mcpServers).sort();
+
+  it("adds GitHub to the three built servers when there is a token for it", () => {
+    const client = createMcpClient(customer, { GITHUB_TOKEN: "ghp_secret" }, config.github);
+
+    expect(servers(client)).toEqual(["database", "github", "incidents", "observability"]);
+  });
+
+  it("runs the three built servers alone when there is not", () => {
+    expect(servers(createMcpClient(customer, {}, config.github))).toEqual([
+      "database",
+      "incidents",
+      "observability",
+    ]);
   });
 });

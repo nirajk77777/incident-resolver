@@ -4,17 +4,23 @@ import { createMiddleware, ToolMessage } from "langchain";
 import { isFastPath } from "./policy";
 import { type RunSummary, summarizeRun } from "./run-summary";
 import type { Triage } from "./schemas";
-import { CODE_RCA, investigators, TRIAGE } from "./subagents";
+import { CODE_RCA, FIX_SHIPPER, investigators, TRIAGE } from "./subagents";
 
 /**
  * The Resolver's procedure, enforced in code rather than trusted to the prompt: Triage runs
  * first and once, only the declared subagents exist, each runs at most once, a Ticket that
  * qualifies for the fast path never reaches an Investigator, Code RCA only opens the Workspace
- * once all three Investigators have reported, and every Investigator that does run is handed
- * Triage's hypothesis as focus. A refused delegation comes back to the model as a tool error
- * that says what to do instead, so the run continues rather than failing.
+ * once all three Investigators have reported, the Fix Shipper only pushes once Code RCA has
+ * reported, and every Investigator that does run is handed Triage's hypothesis as focus. A
+ * refused delegation comes back to the model as a tool error that says what to do instead, so
+ * the run continues rather than failing.
  */
-export const resolverSubagents: readonly string[] = [TRIAGE, ...investigators, CODE_RCA];
+export const resolverSubagents: readonly string[] = [
+  TRIAGE,
+  ...investigators,
+  CODE_RCA,
+  FIX_SHIPPER,
+];
 
 /** What the guard needs to know about the run it is guarding. */
 export type Procedure = {
@@ -25,6 +31,11 @@ export type Procedure = {
    * such subagent, so the guard must not offer it either.
    */
   codeRca: boolean;
+  /**
+   * Whether this run has a GitHub MCP server, and so a Fix Shipper to push the patch with.
+   * A run without one can still find a code bug; it just has nowhere to put the fix.
+   */
+  fixShipper: boolean;
 };
 
 /** What the run had already delegated to, and heard back from, when a tool call was made. */
@@ -60,13 +71,15 @@ export function delegationRefusal(
 function refuse(
   toolCall: ToolCall,
   before: Delegations,
-  { confidenceThreshold, codeRca }: Procedure,
+  { confidenceThreshold, codeRca, fixShipper }: Procedure,
 ): string | undefined {
   if (toolCall.name !== "task") return undefined;
   const { triage, subagentsInvoked, subagentsReported } = before;
-  const available = codeRca
-    ? resolverSubagents
-    : resolverSubagents.filter((name) => name !== CODE_RCA);
+  const missing = new Set<string>([
+    ...(codeRca ? [] : [CODE_RCA]),
+    ...(fixShipper ? [] : [FIX_SHIPPER]),
+  ]);
+  const available = resolverSubagents.filter((name) => !missing.has(name));
   const subagent = toolCall.args.subagent_type;
   if (typeof subagent !== "string" || !available.includes(subagent)) {
     return `there is no subagent named ${String(subagent)}; the only subagents are ${available.join(", ")}`;
@@ -94,6 +107,14 @@ function refuse(
     return (
       "Code RCA opens the Workspace on the Evidence, so wait for all three Investigators to " +
       "report and delegate to it only if their Evidence points at a defect in the code"
+    );
+  }
+  // The Fix Shipper pushes what is in the Workspace, so there has to be something in it. A
+  // branch pushed before Code RCA reported would carry a half-written patch, or none at all.
+  if (subagent === FIX_SHIPPER && !subagentsReported.includes(CODE_RCA)) {
+    return (
+      "the fix shipper pushes the patch Code RCA leaves in the Workspace, so wait for Code RCA " +
+      "to report and delegate to it only if the patch is there and the tests are green"
     );
   }
   return undefined;

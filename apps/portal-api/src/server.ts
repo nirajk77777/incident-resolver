@@ -27,7 +27,7 @@ import {
   SSE_KEEP_ALIVE_MS,
 } from "./sse";
 import { createPortalStore } from "./store";
-import type { TimelineEntry } from "./timeline";
+import { createTimelineWriter, type TimelineEntry } from "./timeline";
 import { createWriteEffects } from "./write-effects";
 
 export type PortalApiOptions = {
@@ -130,12 +130,15 @@ export function createPortalApi({
     rowCap: config.dataFixRowCap,
   });
   const approvals = createApprovalStore({ db, dataFix });
-  const effects = createWriteEffects({ approvals, dataFix, log: app.log });
+  // One writer for everything that lands on a Timeline: the runner's entries for what the run
+  // did, and the write effects' internal note for what the portal did with an approved write.
+  const record = createTimelineWriter(store, bus);
+  const effects = createWriteEffects({ approvals, dataFix, record, log: app.log });
   const runner = createTicketRunner({
     store,
     approvals,
-    bus,
     resolver,
+    record,
     effectsFor: (ticket, run) => effects(ticket.id, run),
     scores,
     incidents: incidents ?? knowledgeWriter({ db, config, cohereApiKey, log: app.log }),

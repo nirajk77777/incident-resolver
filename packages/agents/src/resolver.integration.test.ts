@@ -167,6 +167,11 @@ describe.skipIf(!hasApiKeys)(
         async sendCustomerReply({ text }) {
           return `Sent: ${text}`;
         },
+        // These fixtures are a data fix and an answer; no run here reaches GitHub, and the
+        // CLI-shaped run they stand in for has no server to reach it with.
+        async createPullRequest() {
+          return "There is nowhere to open a pull request on this run.";
+        },
       };
     }
 

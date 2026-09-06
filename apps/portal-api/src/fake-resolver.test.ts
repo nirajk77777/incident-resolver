@@ -28,6 +28,10 @@ function spyEffects(): WriteEffects & { applied: string[] } {
     async sendCustomerReply({ text }) {
       return `Sent: ${text}`;
     },
+    // The scripted Resolver's Ticket is a data fix; it never asks for a pull request.
+    async createPullRequest() {
+      return "not reached";
+    },
   };
 }
 

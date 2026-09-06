@@ -5,10 +5,12 @@ import {
   createPromptClient,
   createResolver,
   defaultThreadId,
+  type GithubOptions,
   interruptsFor,
   type LangfuseCredentials,
   langfusePromptFetcher,
   type Prompts,
+  parseRepo,
   pendingProposals,
   type RunReport,
   type RunStop,
@@ -20,7 +22,13 @@ import {
   type WorkspaceStore,
   workspaceStoreFor,
 } from "@incident-resolver/agents";
-import { argumentsOf, type Config, isApprovalAction, type Ticket } from "@incident-resolver/shared";
+import {
+  argumentsOf,
+  type Config,
+  isApprovalAction,
+  messageOf,
+  type Ticket,
+} from "@incident-resolver/shared";
 import type { Callbacks } from "@langchain/core/callbacks/manager";
 import type { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 import type { ActionRequest, Decision } from "langchain";
@@ -72,6 +80,11 @@ export function createAgentResolver({
   // One clone per Ticket, made the first time a run delegates to Code RCA and never before:
   // most Tickets are answered or fixed in data and never look at the source.
   const workspaces: WorkspaceStore = workspaceStoreFor(config, log);
+  // GitHub, when there is a token for it. Without one the portal still investigates every
+  // Ticket and Code RCA still patches the code in its Workspace; there is simply no Fix
+  // Shipper to push the patch and nowhere to open a pull request, so such a run escalates
+  // with the patch still in the clone.
+  const github = githubFor(config, env, log);
   // Resolved on the first Ticket rather than at startup, so the portal listens without waiting
   // on Langfuse or on Postgres, and so a portal that never runs a Ticket opens no pool.
   let shared: Promise<Shared> | undefined;
@@ -106,7 +119,7 @@ export function createAgentResolver({
     decision: ResolverDecision | undefined,
   ): AsyncGenerator<ResolverEvent> {
     const { prompts, checkpointer } = await load();
-    const mcp = createMcpClient(ticket, env);
+    const mcp = createMcpClient(ticket, env, github ? config.github : undefined);
     const queue = createEventQueue<ResolverEvent>();
     try {
       const tools = await mcp.getTools();
@@ -119,6 +132,7 @@ export function createAgentResolver({
         writeEffects: effects,
         interruptOn: interruptsFor(ticket),
         workspace: workspaces.for(ticket.id),
+        github,
       });
       const translate = createEventTranslator();
       // Derived from the Ticket and the run number, so a run that paused minutes ago is
@@ -197,6 +211,34 @@ export function createAgentResolver({
       await tracing.shutdown();
     },
   };
+}
+
+/**
+ * The repository the branch and the pull request are aimed at, or nothing when this portal has
+ * no GitHub token. The repository is read from the configured ShopLite clone url rather than
+ * named a second time, so the repository Code RCA patches and the one the pull request lands
+ * on cannot drift apart; a clone url that is not a GitHub repository is reported and the
+ * portal runs without GitHub rather than refusing to start.
+ */
+export function githubFor(
+  config: Config,
+  env: NodeEnv,
+  log: (line: string) => void,
+): GithubOptions | undefined {
+  if (!env.GITHUB_TOKEN) {
+    log("GITHUB_TOKEN is not set: runs have no Fix Shipper and cannot open a pull request");
+    return undefined;
+  }
+  try {
+    const repo = parseRepo(config.workspace.repoUrl);
+    log(
+      `Pull requests will be opened on ${repo.owner}/${repo.repo} against ${config.github.defaultBranch}`,
+    );
+    return { repo, base: config.github.defaultBranch };
+  } catch (error) {
+    log(`Runs cannot open a pull request: ${messageOf(error)}`);
+    return undefined;
+  }
 }
 
 /**

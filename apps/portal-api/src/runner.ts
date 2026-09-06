@@ -7,36 +7,38 @@ import {
   BY_HUMAN,
   belowThresholdReason,
   ESCALATION_REPLY,
+  escalated,
   isApprovalAction,
   type ManualResolution,
   messageOf,
   permits,
   type ReviewerDecision,
-  type TicketEventType,
   type TicketStatus,
   type Verdict,
 } from "@incident-resolver/shared";
 import type { FastifyBaseLogger } from "fastify";
 import type { ApprovalRecord, ApprovalStore, RecordedDecision } from "./approvals";
 import { settledProposal } from "./approvals";
-import type { TicketEventBus } from "./bus";
 import {
   type IncidentWriter,
   incidentFromResolution,
   incidentFromVerdict,
   resolutionOf,
 } from "./incidents";
+import { withoutPullRequestLinks } from "./reply";
 import type { ResolverDecision, ResolverEvent, TicketResolver } from "./resolver";
 import type { ScoreWriter } from "./scores";
 import { nextStatus } from "./status";
 import type { PortalStore, TicketRecord } from "./store";
+import type { TimelineWriter } from "./timeline";
 import { timelineEntryFor } from "./timeline";
 
 export type TicketRunnerOptions = {
   store: PortalStore;
   approvals: ApprovalStore;
-  bus: TicketEventBus;
   resolver: TicketResolver;
+  /** Writes an entry onto a Ticket's Timeline and puts it on the live wire. */
+  record: TimelineWriter;
   /** What the portal does when one of a run's writes is approved, built per Ticket. */
   effectsFor: (ticket: TicketRecord, run: number) => WriteEffects;
   /** Every Decision and every Outcome is written back to the run's Langfuse trace. */
@@ -58,7 +60,7 @@ export type TicketResult = { ok: true; ticket: TicketRecord } | Refused;
 
 /**
  * Runs Tickets through the Resolver, one independent run each. Nothing is shared between
- * runs but the store and the bus, so any number of Tickets can be in flight at once.
+ * runs but the store and the timeline writer, so any number of Tickets can be in flight at once.
  */
 export type TicketRunner = {
   /** Starts a run in the background. The Ticket's own timeline reports what it does. */
@@ -98,8 +100,8 @@ function failedVerdict(reason: string): Verdict {
 export function createTicketRunner({
   store,
   approvals,
-  bus,
   resolver,
+  record,
   effectsFor,
   scores,
   incidents,
@@ -110,21 +112,48 @@ export function createTicketRunner({
   const inFlight = new Set<Promise<void>>();
   const shutdown = new AbortController();
 
-  async function record(
-    ticketId: string,
-    run: number,
-    entry: { type: TicketEventType; payload: Record<string, unknown> },
-  ): Promise<void> {
-    bus.publish(ticketId, await store.appendEvent({ ticketId, run, ...entry }));
-  }
-
   async function moveTo(ticket: TicketRecord, run: number, status: TicketStatus): Promise<void> {
     await store.setStatus(ticket.id, status);
     await record(ticket.id, run, { type: "status", payload: { status } });
   }
 
   /**
-   * The Verdict carries the Outcome and the Reply that make a Ticket closed: one write. Three
+  /**
+   * The write an Outcome claims and did not happen, or nothing when the Verdict is true.
+   *
+   * Two Outcomes assert a write. `data_fixed` says an approved statement changed rows, and
+   * `fix_proposed` says an approved pull request is open on GitHub. Both are recorded on the
+   * approval by the effect that made them, so the records are what happened; a Verdict that
+   * disagrees with them is not the story a Reporter is told.
+   */
+  async function unmadeWrite(
+    ticket: TicketRecord,
+    run: number,
+    outcome: Verdict["outcome"],
+  ): Promise<{ warning: string; rootCause: string; note: string; reason: string } | undefined> {
+    if (outcome === "data_fixed" && !(await approvals.dataFixApplied(ticket.id, run))) {
+      return {
+        warning: "A Verdict claimed a data fix that never ran",
+        rootCause:
+          "No approved data fix changed any rows, so this was escalated rather than closed as fixed.",
+        note: "The Verdict said the data was fixed, but no approved fix changed any rows.",
+        reason: "unverified_fix",
+      };
+    }
+    if (outcome === "fix_proposed" && !(await approvals.pullRequestOpened(ticket.id, run))) {
+      return {
+        warning: "A Verdict claimed a pull request that was never opened",
+        rootCause:
+          "No approved pull request was opened, so this was escalated rather than closed as a fix proposed.",
+        note: "The Verdict said a fix was proposed, but no approved pull request was opened.",
+        reason: "unopened_pull_request",
+      };
+    }
+    return undefined;
+  }
+
+  /**
+   * The Verdict carries the Outcome and the Reply that make a Ticket closed: one write. Four
    * things the portal knows and the agent does not are settled here first.
    *
    * Confidence below the threshold escalates, whatever Outcome the Verdict claims. The rule
@@ -132,10 +161,9 @@ export function createTicketRunner({
    * it is the portal that tells the Reporter how their Ticket ended.
    *
    * A Reply a Reviewer approved is what the Reporter reads, even if the Resolver then worded
-   * its Verdict differently, since the approved text is the one that was sent. And a Ticket may
-   * only close `data_fixed` if a fix this run proposed was approved and actually changed rows:
-   * the approval records are what happened, and a Verdict that disagrees with them is not the
-   * story a Reporter is told.
+   * its Verdict differently, since the approved text is the one that was sent. An Outcome that
+   * claims a write is checked against the approval records, above. And the Reply that closes a
+   * customer Ticket carries no link to ShopLite's repository, whoever wrote it.
    */
   async function close(ticket: TicketRecord, run: number, verdict: Verdict): Promise<void> {
     const settled = applyConfidencePolicy(verdict, confidenceThreshold);
@@ -148,28 +176,35 @@ export function createTicketRunner({
         },
       });
     }
-    const [approved, fixed] = await Promise.all([
+    const [approved, unmade] = await Promise.all([
       approvals.approvedReply(ticket.id, run),
-      settled.outcome === "data_fixed"
-        ? approvals.dataFixApplied(ticket.id, run)
-        : Promise.resolve(true),
+      unmadeWrite(ticket, run, settled.outcome),
     ]);
     let closing = approved ? { ...settled, reply: approved } : settled;
-    if (!fixed) {
-      log.warn({ ticketId: ticket.id, run }, "A Verdict claimed a data fix that never ran");
-      closing = {
-        ...closing,
-        outcome: "escalated",
-        rootCause: `${closing.rootCause} No approved data fix changed any rows, so this was escalated rather than closed as fixed.`,
-        reply: ESCALATION_REPLY,
-      };
+    if (unmade) {
+      log.warn({ ticketId: ticket.id, run }, unmade.warning);
+      closing = escalated(closing, unmade.rootCause);
       await record(ticket.id, run, {
         type: "message",
-        payload: {
-          text: "The Verdict said the data was fixed, but no approved fix changed any rows.",
-          reason: "unverified_fix",
-        },
+        payload: { text: unmade.note, reason: unmade.reason },
       });
+    }
+    // Last word on the Reply, so whatever closes a customer Ticket carries no pull request
+    // link: not the Resolver's wording, not a Reviewer's rewording. The link is on the
+    // Timeline as an internal note, which is where the team picks it up (CONTEXT.md).
+    if (ticket.source === "customer") {
+      const cleaned = withoutPullRequestLinks(closing.reply);
+      if (cleaned.removed) {
+        log.warn({ ticketId: ticket.id, run }, "A customer Reply carried a pull request link");
+        closing = { ...closing, reply: cleaned.text };
+        await record(ticket.id, run, {
+          type: "message",
+          payload: {
+            text: "A pull request link was taken out of the Reply before it reached the Reporter.",
+            reason: "link_in_reply",
+          },
+        });
+      }
     }
     const closed = await store.closeTicket(ticket.id, closing, resolutionOf(closing));
     await record(ticket.id, run, { type: "status", payload: { status: "closed" } });

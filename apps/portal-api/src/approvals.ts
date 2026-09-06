@@ -1,3 +1,4 @@
+import { branchNameFor } from "@incident-resolver/agents";
 import {
   type ApprovalAction,
   approvals,
@@ -59,6 +60,8 @@ export type ApprovalStore = {
   recordExecution(id: string, result: Record<string, unknown>, snapshot: unknown): Promise<void>;
   /** Whether a data fix this run proposed was approved and actually changed rows. */
   dataFixApplied(ticketId: string, run: number): Promise<boolean>;
+  /** Whether a pull request this run proposed was approved and actually opened on GitHub. */
+  pullRequestOpened(ticketId: string, run: number): Promise<boolean>;
   /**
    * The Reply this run had approved, as it was finally worded. The Ticket closes with this
    * rather than with the Verdict's text, so a Reviewer's rewording is what the Reporter reads.
@@ -73,11 +76,31 @@ export type ApprovalStoreOptions = {
 };
 
 export function createApprovalStore({ db, dataFix }: ApprovalStoreOptions): ApprovalStore {
+  /**
+   * Whether one of this run's Proposals for an action was carried out. The result the effect
+   * wrote onto the approval is the record of what happened, so this reads that rather than
+   * the Decision: a Proposal can be approved and still not run.
+   */
+  async function executed(
+    ticketId: string,
+    run: number,
+    action: ApprovalAction,
+    happened: (result: Record<string, unknown>) => boolean,
+  ): Promise<boolean> {
+    const rows = await db
+      .select({ result: approvals.result })
+      .from(approvals)
+      .where(
+        and(eq(approvals.ticketId, ticketId), eq(approvals.run, run), eq(approvals.action, action)),
+      );
+    return rows.some((row) => row.result !== null && happened(row.result));
+  }
+
   return {
     async open(request) {
       const { proposal, preview } = await reviewable(
         dataFix,
-        proposalFor(request.action, request.args),
+        proposalFor(request.action, request.args, request.ticketId),
         request.reporterEmail,
       );
       const [row] = await db
@@ -153,17 +176,11 @@ export function createApprovalStore({ db, dataFix }: ApprovalStoreOptions): Appr
     },
 
     async dataFixApplied(ticketId, run) {
-      const rows = await db
-        .select({ result: approvals.result })
-        .from(approvals)
-        .where(
-          and(
-            eq(approvals.ticketId, ticketId),
-            eq(approvals.run, run),
-            eq(approvals.action, "apply_data_fix"),
-          ),
-        );
-      return rows.some((row) => row.result?.ran === true);
+      return executed(ticketId, run, "apply_data_fix", (result) => result.ran === true);
+    },
+
+    async pullRequestOpened(ticketId, run) {
+      return executed(ticketId, run, "create_pull_request", (result) => result.opened === true);
     },
 
     async approvedReply(ticketId, run) {
@@ -196,11 +213,18 @@ export function settledProposal(approval: ApprovalRecord): Proposal | undefined 
 const text = (value: unknown) => (typeof value === "string" ? value : "");
 
 /**
- * The Proposal one gated tool call carries, read off its arguments. A Reply and a pull request
- * are their arguments; a data fix is more, since which table it touches and how many rows it
- * matches are read out of the statement rather than asserted by the agent.
+ * The Proposal one gated tool call carries. A Reply is its arguments; a data fix is more, since
+ * which table it touches and how many rows it matches are read out of the statement rather than
+ * asserted by the agent; and a pull request is its arguments plus the branch, which is derived
+ * from the Ticket the same way the Fix Shipper derived it when it pushed. Deriving it here is
+ * what makes the branch on the card the branch that exists: the gate holds the tool call as the
+ * model wrote it, so a branch it had copied by hand would be a Reviewer approving a name.
  */
-export function proposalFor(action: ApprovalAction, args: Record<string, unknown>): Proposal {
+export function proposalFor(
+  action: ApprovalAction,
+  args: Record<string, unknown>,
+  ticketId: string,
+): Proposal {
   switch (action) {
     case "apply_data_fix":
       return {
@@ -217,7 +241,7 @@ export function proposalFor(action: ApprovalAction, args: Record<string, unknown
     case "create_pull_request":
       return {
         kind: "pull_request",
-        branch: text(args.branch),
+        branch: branchNameFor(ticketId),
         title: text(args.title),
         body: text(args.body),
         files: Array.isArray(args.files) ? args.files.map(text) : [],

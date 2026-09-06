@@ -95,6 +95,10 @@ The Reviewer's verdict on a Proposal: approve, edit, or reject.
 **Data fix**:
 A Proposal to change product data with SQL. Runs only after approval, in a transaction, with a snapshot of affected rows kept for rollback.
 
+**Internal note**:
+Something the portal records on a Ticket for the team rather than for the Reporter, written onto the Timeline. The pull request link is one: the Reply says a fix is underway and never carries it.
+_Avoid_: comment, annotation
+
 ### Agents
 
 **Resolver**:
@@ -106,6 +110,10 @@ A subagent that gathers Evidence from one source: logs, database, or past Incide
 **Code RCA**:
 The subagent that finds and fixes a code bug in the Workspace: it writes a failing test, patches the defect, and runs the tests green. It has no shell and cannot leave the Workspace.
 _Avoid_: code agent, fixer, developer agent
+
+**Fix Shipper**:
+The subagent that takes Code RCA's patch out of the Workspace and pushes it to a branch on ShopLite's repository, named from the Ticket. It writes the pull request but does not open it: that is the Resolver's gated write.
+_Avoid_: shipper, PR agent, publisher
 
 **Sentinel**:
 The watcher that opens Tickets from metrics anomalies. At most one open Ticket per fingerprint of route and error type.

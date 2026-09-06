@@ -19,6 +19,8 @@ export type TimelineCard = {
   payload?: Record<string, unknown>;
   /** A subagent that has started and not yet ended: its card is still open. */
   pending?: boolean;
+  /** Somewhere the card points out to: the pull request an internal note carries. */
+  link?: string;
   /** The tool did not answer the call. The detail is the reason, and it says which. */
   failed?: boolean;
 };
@@ -77,8 +79,18 @@ export function cardFor(entry: TimelineEntry): TimelineCard {
         // away an unscoped query lands here, and so does a tool that simply broke.
         ...(payload.failed === true ? { failed: true } : {}),
       };
-    case "message":
-      return { kind: "message", heading: "Resolver", detail: text(payload.text) };
+    case "message": {
+      // An internal note the portal wrote itself, rather than something the Resolver said.
+      // The pull request link is the one the Reply is never allowed to carry, so this card
+      // is where a Reviewer follows it from.
+      const link = text(payload.url);
+      return {
+        kind: "message",
+        heading: link ? "Internal note" : "Resolver",
+        detail: text(payload.text),
+        ...(link ? { link } : {}),
+      };
+    }
     case "interrupt":
       return {
         kind: "interrupt",

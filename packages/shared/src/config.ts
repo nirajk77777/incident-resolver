@@ -64,6 +64,15 @@ const configSchema = z
     WORKSPACES_DIR: z.string().min(1).default("workspaces"),
     WORKSPACE_COMMAND_TIMEOUT_MS: count().default(300_000),
 
+    // GitHub, reached through the official remote MCP server over HTTP (PLAN.md section 3).
+    // The Fix Shipper pushes the patch to a branch there and the approved pull request is
+    // opened against SHOPLITE_DEFAULT_BRANCH. GITHUB_MCP_TOOLSETS is sent as a header and is
+    // what the server will expose at all, so it is the outer bound on what the token is used
+    // for; the token itself is a secret and stays in the environment as GITHUB_TOKEN.
+    GITHUB_MCP_URL: z.url().default("https://api.githubcopilot.com/mcp/"),
+    GITHUB_MCP_TOOLSETS: z.string().min(1).default("repos,pull_requests"),
+    SHOPLITE_DEFAULT_BRANCH: z.string().min(1).default("main"),
+
     // mcp-incidents pulls this many rows from pgvector by cosine similarity, then
     // Cohere rerank narrows them to TOP_K with relevance scores.
     KNOWLEDGE_SEARCH_CANDIDATES: count().default(20),
@@ -129,6 +138,11 @@ const configSchema = z
       repoUrl: env.SHOPLITE_REPO_URL,
       dir: env.WORKSPACES_DIR,
       commandTimeoutMs: env.WORKSPACE_COMMAND_TIMEOUT_MS,
+    },
+    github: {
+      mcpUrl: env.GITHUB_MCP_URL,
+      toolsets: env.GITHUB_MCP_TOOLSETS,
+      defaultBranch: env.SHOPLITE_DEFAULT_BRANCH,
     },
     knowledge: {
       searchCandidates: env.KNOWLEDGE_SEARCH_CANDIDATES,
