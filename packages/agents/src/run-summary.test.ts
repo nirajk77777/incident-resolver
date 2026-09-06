@@ -44,6 +44,7 @@ describe("summarizeRun", () => {
     expect(summarizeRun(messages)).toEqual({
       triage,
       subagentsInvoked: ["triage", "data-investigator"],
+      subagentsReported: ["triage", "data-investigator"],
       delegationTurns: [["triage"], ["data-investigator"]],
     });
   });
@@ -69,6 +70,26 @@ describe("summarizeRun", () => {
     ]);
   });
 
+  it("separates the subagents that answered from the ones only launched", () => {
+    const fanOut = new AIMessage({
+      content: "",
+      tool_calls: [
+        { id: "l", name: "task", args: { description: "logs", subagent_type: "log-investigator" } },
+        {
+          id: "d",
+          name: "task",
+          args: { description: "data", subagent_type: "data-investigator" },
+        },
+      ],
+    });
+    const messages = [fanOut, new ToolMessage({ tool_call_id: "l", name: "task", content: "{}" })];
+
+    const summary = summarizeRun(messages);
+
+    expect(summary.subagentsInvoked).toEqual(["log-investigator", "data-investigator"]);
+    expect(summary.subagentsReported).toEqual(["log-investigator"]);
+  });
+
   it("ignores tool calls that are not delegations when grouping a turn", () => {
     const mixed = new AIMessage({
       content: "",
@@ -85,6 +106,7 @@ describe("summarizeRun", () => {
     expect(summarizeRun([new HumanMessage("ticket"), new AIMessage("done")])).toEqual({
       triage: undefined,
       subagentsInvoked: [],
+      subagentsReported: [],
       delegationTurns: [],
     });
   });
@@ -102,6 +124,7 @@ describe("summarizeRun", () => {
     expect(summarizeRun(messages)).toEqual({
       triage: undefined,
       subagentsInvoked: ["triage"],
+      subagentsReported: ["triage"],
       delegationTurns: [["triage"]],
     });
   });

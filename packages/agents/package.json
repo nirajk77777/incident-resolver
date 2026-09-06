@@ -9,6 +9,7 @@
   "scripts": {
     "resolve": "node --env-file-if-exists=../../.env --import tsx src/cli.ts",
     "prompts:sync": "node --env-file-if-exists=../../.env --import tsx scripts/prompts-sync.ts",
+    "workspaces:clean": "node --env-file-if-exists=../../.env --import tsx scripts/workspaces-clean.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -28,6 +29,7 @@
     "@opentelemetry/api": "1.9.1",
     "@opentelemetry/sdk-node": "0.222.0",
     "deepagents": "1.13.3",
+    "execa": "^10.0.1",
     "langchain": "1.5.10",
     "zod": "4.5.4"
   }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  codeRcaSchema,
   dataInvestigationSchema,
   incidentSearchSchema,
   logInvestigationSchema,
@@ -129,5 +130,53 @@ describe("incidentSearchSchema", () => {
       evidence: [],
     });
     expect(result.matches).toEqual([]);
+  });
+});
+
+const rca = {
+  rootCause:
+    "finalizeOrder discounts a subtotal calculateSubtotal has already discounted, so a percent code comes off twice.",
+  file: "apps/api/src/domain/order.ts",
+  line: 20,
+  failingTest: {
+    file: "apps/api/src/domain/order.test.ts",
+    name: "takes a percentage code off exactly once",
+  },
+  patch: {
+    files: ["apps/api/src/domain/order.ts"],
+    summary: "Price the order from the undiscounted subtotal and take the discount off once.",
+  },
+  testsGreen: true,
+};
+
+describe("codeRcaSchema", () => {
+  it("accepts an RCA that names the file, the line, the failing test, and a green suite", () => {
+    expect(codeRcaSchema.parse(rca)).toEqual(rca);
+  });
+
+  it("takes a line number or nothing, but never a line that does not exist", () => {
+    expect(codeRcaSchema.safeParse({ ...rca, line: 0 }).success).toBe(false);
+    const { line, ...withoutLine } = rca;
+    expect(codeRcaSchema.safeParse(withoutLine).success).toBe(false);
+  });
+
+  it("insists a patch that exists names the files it touched", () => {
+    expect(codeRcaSchema.safeParse({ ...rca, patch: { ...rca.patch, files: [] } }).success).toBe(
+      false,
+    );
+  });
+
+  it("lets Code RCA report that it could not find the cause, rather than inventing one", () => {
+    const gaveUp = {
+      rootCause:
+        "The Evidence points at the checkout route, but the total it returns is computed in a module I could not find; I changed nothing.",
+      file: null,
+      line: null,
+      failingTest: null,
+      patch: null,
+      testsGreen: false,
+    };
+
+    expect(codeRcaSchema.parse(gaveUp)).toEqual(gaveUp);
   });
 });

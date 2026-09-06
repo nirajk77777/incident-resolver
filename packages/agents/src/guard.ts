@@ -2,18 +2,33 @@ import { AIMessage, type BaseMessage } from "@langchain/core/messages";
 import type { ToolCall } from "@langchain/core/messages/tool";
 import { createMiddleware, ToolMessage } from "langchain";
 import { isFastPath } from "./policy";
-import { summarizeRun } from "./run-summary";
+import { type RunSummary, summarizeRun } from "./run-summary";
 import type { Triage } from "./schemas";
-import { investigators, TRIAGE } from "./subagents";
+import { CODE_RCA, investigators, TRIAGE } from "./subagents";
 
 /**
  * The Resolver's procedure, enforced in code rather than trusted to the prompt: Triage runs
  * first and once, only the declared subagents exist, each runs at most once, a Ticket that
- * qualifies for the fast path never reaches an Investigator, and every Investigator that does
- * run is handed Triage's hypothesis as focus. A refused delegation comes back to the model as
- * a tool error that says what to do instead, so the run continues rather than failing.
+ * qualifies for the fast path never reaches an Investigator, Code RCA only opens the Workspace
+ * once all three Investigators have reported, and every Investigator that does run is handed
+ * Triage's hypothesis as focus. A refused delegation comes back to the model as a tool error
+ * that says what to do instead, so the run continues rather than failing.
  */
-export const resolverSubagents: readonly string[] = [TRIAGE, ...investigators];
+export const resolverSubagents: readonly string[] = [TRIAGE, ...investigators, CODE_RCA];
+
+/** What the guard needs to know about the run it is guarding. */
+export type Procedure = {
+  confidenceThreshold: number;
+  /**
+   * Whether this run has a Workspace, and so a Code RCA subagent to delegate to. A run without
+   * one — the command line, or a portal with no ShopLite repository configured — declares no
+   * such subagent, so the guard must not offer it either.
+   */
+  codeRca: boolean;
+};
+
+/** What the run had already delegated to, and heard back from, when a tool call was made. */
+type Delegations = Pick<RunSummary, "triage" | "subagentsInvoked" | "subagentsReported">;
 
 /** What the guard decided about one tool call, and the Triage it read on the way. */
 export type Delegation = {
@@ -27,32 +42,34 @@ export type Delegation = {
 export function judgeDelegation(
   toolCall: ToolCall,
   messages: BaseMessage[],
-  confidenceThreshold: number,
+  procedure: Procedure,
 ): Delegation {
-  const { triage, subagentsInvoked } = delegationsBefore(toolCall, messages);
-  const refusal = refuse(toolCall, triage, subagentsInvoked, confidenceThreshold);
-  return { refusal, triage };
+  const before = delegationsBefore(toolCall, messages);
+  return { refusal: refuse(toolCall, before, procedure), triage: before.triage };
 }
 
 /** Why a task tool call must not run, or undefined when it may. */
 export function delegationRefusal(
   toolCall: ToolCall,
   messages: BaseMessage[],
-  confidenceThreshold: number,
+  procedure: Procedure,
 ): string | undefined {
-  return judgeDelegation(toolCall, messages, confidenceThreshold).refusal;
+  return judgeDelegation(toolCall, messages, procedure).refusal;
 }
 
 function refuse(
   toolCall: ToolCall,
-  triage: Triage | undefined,
-  subagentsInvoked: string[],
-  confidenceThreshold: number,
+  before: Delegations,
+  { confidenceThreshold, codeRca }: Procedure,
 ): string | undefined {
   if (toolCall.name !== "task") return undefined;
+  const { triage, subagentsInvoked, subagentsReported } = before;
+  const available = codeRca
+    ? resolverSubagents
+    : resolverSubagents.filter((name) => name !== CODE_RCA);
   const subagent = toolCall.args.subagent_type;
-  if (typeof subagent !== "string" || !resolverSubagents.includes(subagent)) {
-    return `there is no subagent named ${String(subagent)}; the only subagents are ${resolverSubagents.join(", ")}`;
+  if (typeof subagent !== "string" || !available.includes(subagent)) {
+    return `there is no subagent named ${String(subagent)}; the only subagents are ${available.join(", ")}`;
   }
   if (subagent === TRIAGE) {
     return triage || subagentsInvoked.includes(TRIAGE)
@@ -68,6 +85,16 @@ function refuse(
   }
   if (subagentsInvoked.includes(subagent)) {
     return `the ${subagent} subagent has already run for this Ticket; use the Evidence it returned`;
+  }
+  // Code RCA is delegated to on the Evidence, so the Evidence has to be in first. Whether it
+  // points at a code bug is the Resolver's reading of three reports and stays in its prompt;
+  // what is checkable here is that all three have reported, and that is enforced. A Ticket the
+  // Resolver sends to the Workspace on Triage's guess alone has skipped the deciding step.
+  if (subagent === CODE_RCA && !investigators.every((name) => subagentsReported.includes(name))) {
+    return (
+      "Code RCA opens the Workspace on the Evidence, so wait for all three Investigators to " +
+      "report and delegate to it only if their Evidence points at a defect in the code"
+    );
   }
   return undefined;
 }
@@ -107,14 +134,14 @@ export function withTriageFocus(toolCall: ToolCall, triage: Triage | undefined):
   return { ...toolCall, args: { ...toolCall.args, description: focus } };
 }
 
-export function createProcedureGuard(confidenceThreshold: number) {
+export function createProcedureGuard(procedure: Procedure) {
   return createMiddleware({
     name: "procedure-guard",
     wrapToolCall: (request, handler) => {
       const { refusal, triage } = judgeDelegation(
         request.toolCall,
         request.state.messages,
-        confidenceThreshold,
+        procedure,
       );
       if (refusal !== undefined) {
         return new ToolMessage({
@@ -138,10 +165,7 @@ export function createProcedureGuard(confidenceThreshold: number) {
  * is what stops one turn asking for the same Investigator twice. Triage is read from the
  * earlier turns alone: a result cannot exist yet for a call in the current one.
  */
-function delegationsBefore(
-  toolCall: ToolCall,
-  messages: BaseMessage[],
-): { triage: Triage | undefined; subagentsInvoked: string[] } {
+function delegationsBefore(toolCall: ToolCall, messages: BaseMessage[]): Delegations {
   const turn = toolCall.id
     ? messages.findIndex(
         (message) =>
@@ -165,5 +189,6 @@ function delegationsBefore(
   return {
     triage: before.triage,
     subagentsInvoked: [...before.subagentsInvoked, ...earlierInTurn],
+    subagentsReported: before.subagentsReported,
   };
 }

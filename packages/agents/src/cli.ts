@@ -18,6 +18,7 @@ import {
   resumeTicket,
 } from "./resolver";
 import { startTracing, traceRun } from "./tracing";
+import { workspaceStoreFor } from "./workspace";
 import { SEND_CUSTOMER_REPLY, type WriteEffects } from "./write-tools";
 
 /**
@@ -108,6 +109,9 @@ async function main(): Promise<void> {
     log(`MCP tools loaded: ${tools.map((tool) => tool.name).join(", ")}`);
 
     const models = createModels(config, openAiApiKey);
+    // Code RCA works in a throwaway clone and writes nothing outside it, so a run with no
+    // Reviewer can still have a Workspace: it is only the gated writes a shell must not approve.
+    const workspaces = workspaceStoreFor(config, log);
     const resolver = createResolver({
       config,
       models,
@@ -116,6 +120,7 @@ async function main(): Promise<void> {
       checkpointer,
       writeEffects: unattendedEffects,
       interruptOn: interruptsFor(ticket),
+      workspace: workspaces.for(ticket.id),
     });
     const threadId = args.threadId ?? freshThreadId(ticket);
     log(`Resolving "${ticket.title}" on thread ${threadId} with ${config.models.resolver}`);

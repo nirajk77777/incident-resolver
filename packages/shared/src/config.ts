@@ -56,6 +56,14 @@ const configSchema = z
     // The service.name ShopLite reports to LGTM: Loki's service_name and Prometheus's job.
     SHOPLITE_SERVICE_NAME: z.string().min(1).default("shoplite-api"),
 
+    // The Workspace: the ShopLite repository Code RCA works in a per-Ticket clone of
+    // (ADR-0001), where those clones live, and how long any one command in one may take —
+    // the clone, the install, and the test run. WORKSPACES_DIR is read relative to this
+    // repository's root unless it is absolute.
+    SHOPLITE_REPO_URL: z.string().min(1).default("https://github.com/nirajk77777/shoplite.git"),
+    WORKSPACES_DIR: z.string().min(1).default("workspaces"),
+    WORKSPACE_COMMAND_TIMEOUT_MS: count().default(300_000),
+
     // mcp-incidents pulls this many rows from pgvector by cosine similarity, then
     // Cohere rerank narrows them to TOP_K with relevance scores.
     KNOWLEDGE_SEARCH_CANDIDATES: count().default(20),
@@ -117,6 +125,11 @@ const configSchema = z
     queryRowCap: env.QUERY_ROW_CAP,
     logLineCap: env.LOG_LINE_CAP,
     shopliteServiceName: env.SHOPLITE_SERVICE_NAME,
+    workspace: {
+      repoUrl: env.SHOPLITE_REPO_URL,
+      dir: env.WORKSPACES_DIR,
+      commandTimeoutMs: env.WORKSPACE_COMMAND_TIMEOUT_MS,
+    },
     knowledge: {
       searchCandidates: env.KNOWLEDGE_SEARCH_CANDIDATES,
       searchTopK: env.KNOWLEDGE_SEARCH_TOP_K,

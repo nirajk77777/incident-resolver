@@ -3,6 +3,7 @@ export { readTicket } from "./cli-args";
 export {
   createProcedureGuard,
   delegationRefusal,
+  type Procedure,
   resolverSubagents,
   withTriageFocus,
 } from "./guard";
@@ -50,6 +51,8 @@ export {
 } from "./resolver";
 export { type RunSummary, summarizeRun } from "./run-summary";
 export {
+  type CodeRca,
+  codeRcaSchema,
   components,
   type DataInvestigation,
   dataInvestigationSchema,
@@ -65,6 +68,7 @@ export {
   triageSchema,
 } from "./schemas";
 export {
+  CODE_RCA,
   DATA_INVESTIGATOR,
   INCIDENT_HISTORIAN,
   investigators,
@@ -79,6 +83,12 @@ export {
   traceRun,
   traceTags,
 } from "./tracing";
+export {
+  type Workspace,
+  type WorkspaceStore,
+  workspaceStoreFor,
+  workspacesRoot,
+} from "./workspace";
 export {
   APPLY_DATA_FIX,
   createWriteTools,

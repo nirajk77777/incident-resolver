@@ -96,6 +96,10 @@ The orchestrating agent that owns a Ticket from Triage to Outcome.
 **Investigator**:
 A subagent that gathers Evidence from one source: logs, database, or past Incidents. All three always run whenever a Ticket is investigated; none run on the fast path.
 
+**Code RCA**:
+The subagent that finds and fixes a code bug in the Workspace: it writes a failing test, patches the defect, and runs the tests green. It has no shell and cannot leave the Workspace.
+_Avoid_: code agent, fixer, developer agent
+
 **Sentinel**:
 The watcher that opens Tickets from metrics anomalies. At most one open Ticket per fingerprint of route and error type.
 _Avoid_: monitor, watcher, alerting

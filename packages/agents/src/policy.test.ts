@@ -69,6 +69,7 @@ describe("applyConfidencePolicy", () => {
 const summary = (delegationTurns: string[][]): RunSummary => ({
   triage: undefined,
   subagentsInvoked: delegationTurns.flat(),
+  subagentsReported: delegationTurns.flat(),
   delegationTurns,
 });
 

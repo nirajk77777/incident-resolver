@@ -7,6 +7,12 @@ import { type BaseCheckpointSaver, Command } from "@langchain/langgraph";
 import { createDeepAgent } from "deepagents";
 import type { ActionRequest, Decision, HITLResponse, InterruptOnConfig } from "langchain";
 import { toolStrategy } from "langchain";
+import {
+  createCodeRcaSubagent,
+  createWorkspaceProvisioner,
+  workspaceBackend,
+  workspaceClosed,
+} from "./code-rca";
 import { createProcedureGuard } from "./guard";
 import type { Models } from "./models";
 import { applyConfidencePolicy, investigationWarnings, isFastPath, ranInParallel } from "./policy";
@@ -21,6 +27,7 @@ import {
   investigators,
 } from "./subagents";
 import { createToolErrorGuard } from "./tool-errors";
+import type { Workspace } from "./workspace";
 import { createWriteTools, type WriteEffects } from "./write-tools";
 
 export type ResolverOptions = {
@@ -35,6 +42,13 @@ export type ResolverOptions = {
   writeEffects: WriteEffects;
   /** Which of those writes stop for a Reviewer first, from `interruptsFor(ticket)`. */
   interruptOn: Record<string, InterruptOnConfig>;
+  /**
+   * This Ticket's clone of ShopLite, which is what gives the run a Code RCA subagent. Left out
+   * when there is nowhere to clone to — the command line, or a portal with no ShopLite
+   * repository configured — and the Resolver then has no Workspace and no subagent to reach it
+   * with, which is a run that can describe a code bug but not fix one.
+   */
+  workspace?: Workspace | undefined;
 };
 
 /**
@@ -63,23 +77,43 @@ export function createResolver({
   checkpointer,
   writeEffects,
   interruptOn,
+  workspace,
 }: ResolverOptions) {
   const investigator = { model: models.investigator, tools, prompts };
+  // Empty on a run with no Workspace, which is what leaves the Resolver with nothing to
+  // delegate a code bug to; the guard is told the same thing so its refusal says so.
+  const codeRcaSubagent = workspace
+    ? [createCodeRcaSubagent({ model: models.codeRca, prompts, workspace })]
+    : [];
   return createDeepAgent({
     name: "resolver",
     model: models.resolver,
     systemPrompt: prompts.text("resolver"),
     tools: createWriteTools(writeEffects),
     interruptOn,
+    // The Workspace is mounted on the agent's filesystem and closed to everyone here: Code RCA
+    // declares its own permissions and is the only agent let in (ADR-0002). Without a Workspace
+    // the filesystem stays what it was, files in graph state that nothing here uses.
+    backend: workspace ? workspaceBackend(workspace) : undefined,
+    permissions: workspace ? workspaceClosed : undefined,
     subagents: [
       createTriageSubagent({ model: models.triage, tools, prompts }),
       createLogInvestigatorSubagent(investigator),
       createDataInvestigatorSubagent(investigator),
       createIncidentHistorianSubagent(investigator),
+      ...codeRcaSubagent,
     ],
     // The error guard is outermost: an Investigator that dies comes back as a task tool error
-    // the Resolver can decide around, rather than ending the run.
-    middleware: [createToolErrorGuard(), createProcedureGuard(config.confidenceThreshold)],
+    // the Resolver can decide around, rather than ending the run. The provisioner is innermost,
+    // so a delegation the guard refuses never clones anything.
+    middleware: [
+      createToolErrorGuard(),
+      createProcedureGuard({
+        confidenceThreshold: config.confidenceThreshold,
+        codeRca: workspace !== undefined,
+      }),
+      ...(workspace ? [createWorkspaceProvisioner(workspace)] : []),
+    ],
     responseFormat: toolStrategy(verdictSchema),
     checkpointer,
   });

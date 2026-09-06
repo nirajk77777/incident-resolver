@@ -27,6 +27,11 @@ describe("loadConfig", () => {
     expect(config.queryRowCap).toBe(200);
     expect(config.logLineCap).toBe(100);
     expect(config.shopliteServiceName).toBe("shoplite-api");
+    expect(config.workspace).toEqual({
+      repoUrl: "https://github.com/nirajk77777/shoplite.git",
+      dir: "workspaces",
+      commandTimeoutMs: 300_000,
+    });
     expect(config.infra).toEqual({
       databaseUrl: "postgres://postgres:postgres@localhost:5432/incident_resolver",
       shopliteReadonlyDatabaseUrl:
@@ -63,6 +68,9 @@ describe("loadConfig", () => {
       QUERY_ROW_CAP: "9",
       LOG_LINE_CAP: "11",
       SHOPLITE_SERVICE_NAME: "shop",
+      SHOPLITE_REPO_URL: "git@github.com:someone/shoplite.git",
+      WORKSPACES_DIR: "/var/workspaces",
+      WORKSPACE_COMMAND_TIMEOUT_MS: "60000",
       DATABASE_URL: "postgres://u:p@db:5432/x",
       SHOPLITE_READONLY_DATABASE_URL: "postgres://r:p@db:5432/x",
       SHOPLITE_WRITE_DATABASE_URL: "postgres://w:p@db:5432/x",
@@ -96,6 +104,11 @@ describe("loadConfig", () => {
     expect(config.queryRowCap).toBe(9);
     expect(config.logLineCap).toBe(11);
     expect(config.shopliteServiceName).toBe("shop");
+    expect(config.workspace).toEqual({
+      repoUrl: "git@github.com:someone/shoplite.git",
+      dir: "/var/workspaces",
+      commandTimeoutMs: 60_000,
+    });
     expect(config.infra).toEqual({
       databaseUrl: "postgres://u:p@db:5432/x",
       shopliteReadonlyDatabaseUrl: "postgres://r:p@db:5432/x",

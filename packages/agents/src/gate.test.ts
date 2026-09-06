@@ -80,7 +80,7 @@ function gatedRun(effects: WriteEffects): ResolveOptions {
   ]) as unknown as Models["resolver"];
   const resolver = createResolver({
     config,
-    models: { resolver: model, triage: model, investigator: model },
+    models: { resolver: model, triage: model, investigator: model, codeRca: model },
     tools: stubTools,
     prompts,
     checkpointer: new MemorySaver(),

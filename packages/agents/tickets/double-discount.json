@@ -1,0 +1,7 @@
+{
+  "id": "50000000-0000-4000-8000-000000000004",
+  "source": "customer",
+  "reporterEmail": "ava.chen@example.com",
+  "title": "Discount applied twice on my order",
+  "body": "I ordered two Stoneware Mugs (£12.00 each) and one Soy Candle (£18.00), so £42.00 of items, and used SALE10 for 10% off. The cart page showed subtotal £42.00, discount £4.20, total £37.80, which is what I expected to pay. The order confirmation afterwards says subtotal £37.80, discount £3.78, total £34.02. The subtotal on the order is not what my items add up to, and the 10% looks like it has come off twice. I am not complaining about paying less, but I do not trust the receipt and I need a correct one for expenses. Could you tell me what I was actually charged?"
+}

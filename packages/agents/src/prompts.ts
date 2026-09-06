@@ -15,6 +15,7 @@ export const promptNames = [
   "log-investigator",
   "data-investigator",
   "incident-historian",
+  "code-rca",
 ] as const;
 export type PromptName = (typeof promptNames)[number];
 

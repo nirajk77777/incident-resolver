@@ -2,7 +2,7 @@ import { AIMessage, HumanMessage, ToolMessage } from "@langchain/core/messages";
 import { describe, expect, it } from "vitest";
 import { createProcedureGuard, delegationRefusal, FOCUS_HEADING, withTriageFocus } from "./guard";
 import type { Triage } from "./schemas";
-import { investigators } from "./subagents";
+import { CODE_RCA, investigators } from "./subagents";
 
 const question: Triage = {
   category: "question",
@@ -26,6 +26,11 @@ const dataIssue: Triage = {
   helpArticleIds: [],
   bestHelpArticle: null,
 };
+
+/** The procedure as a run without a Workspace sees it: no Code RCA to delegate to. */
+const procedure = { confidenceThreshold: 0.6, codeRca: false };
+/** The same run with a Workspace, which is what makes Code RCA one of the subagents. */
+const withCodeRca = { confidenceThreshold: 0.6, codeRca: true };
 
 const task = (subagent: string, id = "call") => ({
   id,
@@ -52,25 +57,39 @@ function fanOut(triage: Triage) {
   ];
 }
 
+/** The point in a run where all three Investigators have reported and the Evidence is in. */
+function afterInvestigation(triage: Triage) {
+  return [
+    ...fanOut(triage),
+    ...investigators.map(
+      (name) => new ToolMessage({ tool_call_id: `call-${name}`, name: "task", content: "{}" }),
+    ),
+  ];
+}
+
 describe("delegationRefusal", () => {
   it("lets any tool other than task through", () => {
-    expect(delegationRefusal({ name: "ls", args: {} }, [], 0.6)).toBeUndefined();
+    expect(delegationRefusal({ name: "ls", args: {} }, [], procedure)).toBeUndefined();
   });
 
   it("refuses a subagent that does not exist", () => {
-    expect(delegationRefusal(task("general-purpose"), [], 0.6)).toMatch(
+    expect(delegationRefusal(task("general-purpose"), [], procedure)).toMatch(
       /no subagent named general-purpose/,
     );
   });
 
   it("lets Triage run first and refuses it a second time", () => {
-    expect(delegationRefusal(task("triage"), [new HumanMessage("ticket")], 0.6)).toBeUndefined();
-    expect(delegationRefusal(task("triage"), afterTriage(question), 0.6)).toMatch(/already run/);
+    expect(
+      delegationRefusal(task("triage"), [new HumanMessage("ticket")], procedure),
+    ).toBeUndefined();
+    expect(delegationRefusal(task("triage"), afterTriage(question), procedure)).toMatch(
+      /already run/,
+    );
   });
 
   it("refuses every Investigator before Triage has run", () => {
     for (const name of investigators) {
-      expect(delegationRefusal(task(name), [new HumanMessage("ticket")], 0.6)).toMatch(
+      expect(delegationRefusal(task(name), [new HumanMessage("ticket")], procedure)).toMatch(
         /triage subagent first/,
       );
     }
@@ -78,7 +97,7 @@ describe("delegationRefusal", () => {
 
   it("refuses every Investigator when the fast path applies", () => {
     for (const name of investigators) {
-      expect(delegationRefusal(task(name), afterTriage(question), 0.6)).toMatch(
+      expect(delegationRefusal(task(name), afterTriage(question), procedure)).toMatch(
         /fast path applies/,
       );
     }
@@ -87,15 +106,15 @@ describe("delegationRefusal", () => {
   it("lets all three Investigators run below the threshold or for another Category", () => {
     const lowConfidence = { ...question, confidence: 0.5 };
     for (const name of investigators) {
-      expect(delegationRefusal(task(name), afterTriage(lowConfidence), 0.6)).toBeUndefined();
-      expect(delegationRefusal(task(name), afterTriage(dataIssue), 0.6)).toBeUndefined();
+      expect(delegationRefusal(task(name), afterTriage(lowConfidence), procedure)).toBeUndefined();
+      expect(delegationRefusal(task(name), afterTriage(dataIssue), procedure)).toBeUndefined();
     }
   });
 
   it("lets a fan-out of all three through: none of them counts the others, or itself, as already run", () => {
     const messages = fanOut(dataIssue);
     for (const name of investigators) {
-      expect(delegationRefusal(task(name, `call-${name}`), messages, 0.6)).toBeUndefined();
+      expect(delegationRefusal(task(name, `call-${name}`), messages, procedure)).toBeUndefined();
     }
   });
 
@@ -108,8 +127,10 @@ describe("delegationRefusal", () => {
       }),
     ];
 
-    expect(delegationRefusal(task("log-investigator", "first"), messages, 0.6)).toBeUndefined();
-    expect(delegationRefusal(task("log-investigator", "second"), messages, 0.6)).toMatch(
+    expect(
+      delegationRefusal(task("log-investigator", "first"), messages, procedure),
+    ).toBeUndefined();
+    expect(delegationRefusal(task("log-investigator", "second"), messages, procedure)).toMatch(
       /log-investigator subagent has already run/,
     );
   });
@@ -121,7 +142,7 @@ describe("delegationRefusal", () => {
         (name) => new ToolMessage({ tool_call_id: `call-${name}`, name: "task", content: "{}" }),
       ),
     ];
-    expect(delegationRefusal(task("log-investigator", "again"), messages, 0.6)).toMatch(
+    expect(delegationRefusal(task("log-investigator", "again"), messages, procedure)).toMatch(
       /log-investigator subagent has already run/,
     );
   });
@@ -169,7 +190,7 @@ describe("withTriageFocus", () => {
 });
 
 describe("createProcedureGuard", () => {
-  const guard = createProcedureGuard(0.6);
+  const guard = createProcedureGuard(procedure);
 
   const wrap = (
     toolCall: ReturnType<typeof task>,
@@ -209,5 +230,52 @@ describe("createProcedureGuard", () => {
     });
 
     expect(seen).toContain(dataIssue.hypothesis);
+  });
+});
+
+describe("delegating to Code RCA", () => {
+  it("is not a subagent at all on a run with no Workspace", () => {
+    expect(delegationRefusal(task(CODE_RCA), afterInvestigation(dataIssue), procedure)).toMatch(
+      /no subagent named code-rca/,
+    );
+  });
+
+  it("runs once the three Investigators have reported", () => {
+    expect(
+      delegationRefusal(task(CODE_RCA), afterInvestigation(dataIssue), withCodeRca),
+    ).toBeUndefined();
+  });
+
+  it("waits for the Evidence: no Investigator has reported yet", () => {
+    expect(delegationRefusal(task(CODE_RCA), afterTriage(dataIssue), withCodeRca)).toMatch(
+      /all three Investigators/,
+    );
+  });
+
+  it("waits for the Evidence: the three were launched but none has answered", () => {
+    expect(delegationRefusal(task(CODE_RCA), fanOut(dataIssue), withCodeRca)).toMatch(
+      /all three Investigators/,
+    );
+  });
+
+  it("never runs before Triage, or on the fast path", () => {
+    expect(delegationRefusal(task(CODE_RCA), [new HumanMessage("ticket")], withCodeRca)).toMatch(
+      /triage subagent first/,
+    );
+    expect(delegationRefusal(task(CODE_RCA), afterInvestigation(question), withCodeRca)).toMatch(
+      /fast path applies/,
+    );
+  });
+
+  it("runs at most once, like every other subagent", () => {
+    const messages = [
+      ...afterInvestigation(dataIssue),
+      new AIMessage({ content: "", tool_calls: [task(CODE_RCA, "rca")] }),
+      new ToolMessage({ tool_call_id: "rca", name: "task", content: "{}" }),
+    ];
+
+    expect(delegationRefusal(task(CODE_RCA, "again"), messages, withCodeRca)).toMatch(
+      /code-rca subagent has already run/,
+    );
   });
 });

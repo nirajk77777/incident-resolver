@@ -15,6 +15,7 @@ export const TRIAGE = "triage";
 export const LOG_INVESTIGATOR = "log-investigator";
 export const DATA_INVESTIGATOR = "data-investigator";
 export const INCIDENT_HISTORIAN = "incident-historian";
+export const CODE_RCA = "code-rca";
 
 /** The three Investigators, in the order the Resolver is told to launch them. */
 export const investigators = [LOG_INVESTIGATOR, DATA_INVESTIGATOR, INCIDENT_HISTORIAN] as const;

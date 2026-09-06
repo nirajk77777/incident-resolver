@@ -7,6 +7,12 @@ export type RunSummary = {
   /** Every subagent the Resolver delegated to through the task tool, in order, repeats included. */
   subagentsInvoked: string[];
   /**
+   * The subagents that have answered, in the order their results came back. A subagent that was
+   * launched is not one that has reported: a fan-out is invoked three deep and reported none,
+   * which is the difference between a delegation being under way and its Evidence being in.
+   */
+  subagentsReported: string[];
+  /**
    * The subagents named by each model turn that delegated, in order. A fan-out is one turn
    * holding several names: that is what makes their spans run, and appear in Langfuse, at once.
    */
@@ -22,6 +28,7 @@ export type RunSummary = {
 export function summarizeRun(messages: BaseMessage[]): RunSummary {
   const subagentByCallId = new Map<string, string>();
   const subagentsInvoked: string[] = [];
+  const subagentsReported: string[] = [];
   const delegationTurns: string[][] = [];
   let triage: Triage | undefined;
 
@@ -37,13 +44,14 @@ export function summarizeRun(messages: BaseMessage[]): RunSummary {
       }
       if (turn.length > 0) delegationTurns.push(turn);
     } else if (ToolMessage.isInstance(message)) {
-      if (triage === undefined && subagentByCallId.get(message.tool_call_id) === "triage") {
-        triage = parseTriage(message.content);
-      }
+      const answered = subagentByCallId.get(message.tool_call_id);
+      if (answered === undefined) continue;
+      subagentsReported.push(answered);
+      if (triage === undefined && answered === "triage") triage = parseTriage(message.content);
     }
   }
 
-  return { triage, subagentsInvoked, delegationTurns };
+  return { triage, subagentsInvoked, subagentsReported, delegationTurns };
 }
 
 function parseTriage(content: BaseMessage["content"]): Triage | undefined {

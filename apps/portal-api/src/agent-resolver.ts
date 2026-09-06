@@ -17,6 +17,8 @@ import {
   startTracing,
   streamTicket,
   traceRun,
+  type WorkspaceStore,
+  workspaceStoreFor,
 } from "@incident-resolver/agents";
 import { argumentsOf, type Config, isApprovalAction, type Ticket } from "@incident-resolver/shared";
 import type { Callbacks } from "@langchain/core/callbacks/manager";
@@ -67,6 +69,9 @@ export function createAgentResolver({
       : "Tracing disabled: set LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY to trace runs",
   );
   const models = createModels(config, openAiApiKey);
+  // One clone per Ticket, made the first time a run delegates to Code RCA and never before:
+  // most Tickets are answered or fixed in data and never look at the source.
+  const workspaces: WorkspaceStore = workspaceStoreFor(config, log);
   // Resolved on the first Ticket rather than at startup, so the portal listens without waiting
   // on Langfuse or on Postgres, and so a portal that never runs a Ticket opens no pool.
   let shared: Promise<Shared> | undefined;
@@ -113,6 +118,7 @@ export function createAgentResolver({
         checkpointer,
         writeEffects: effects,
         interruptOn: interruptsFor(ticket),
+        workspace: workspaces.for(ticket.id),
       });
       const translate = createEventTranslator();
       // Derived from the Ticket and the run number, so a run that paused minutes ago is
