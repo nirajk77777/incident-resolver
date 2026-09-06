@@ -1,0 +1,132 @@
+import { createDb, loadConfig, runMigrations, type Ticket } from "@incident-resolver/shared";
+import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
+import type { MultiServerMCPClient } from "@langchain/mcp-adapters";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createMcpClient } from "./mcp";
+import { createModels } from "./models";
+import { createResolver } from "./resolver";
+import { dataInvestigatorToolNames, selectTools, triageToolNames } from "./subagents";
+
+// Needs `docker compose up`, this repo's `pnpm db:migrate`, and ShopLite's
+// `pnpm db:migrate && pnpm db:seed`. Run with `pnpm test:integration`.
+//
+// No model is called and no embedding is made: this proves the Resolver can be assembled the
+// way the CLI assembles it. The MCP servers start with whatever keys the shell has, or with
+// placeholders, since mcp-incidents only checks that COHERE_API_KEY is present and ChatOpenAI
+// only checks that OPENAI_API_KEY is present until the first call.
+
+const config = loadConfig();
+const ava = { id: "00000000-0000-4000-8000-000000000001", email: "ava.chen@example.com" };
+
+const customerTicket: Ticket = {
+  id: "50000000-0000-4000-8000-000000000101",
+  source: "customer",
+  reporterEmail: ava.email,
+  title: "Checkout failed",
+  body: "Money not deducted.",
+};
+
+const env = {
+  ...process.env,
+  COHERE_API_KEY: process.env.COHERE_API_KEY ?? "placeholder-for-wiring-test",
+  OPENAI_API_KEY: process.env.OPENAI_API_KEY ?? "placeholder-for-wiring-test",
+};
+
+describe("Resolver wiring", () => {
+  const admin = createDb(config.infra.databaseUrl);
+  let mcp: MultiServerMCPClient;
+
+  beforeAll(async () => {
+    await runMigrations(admin);
+    const seeded = await admin.$client.query("SELECT 1 FROM shoplite.customers WHERE id = $1", [
+      ava.id,
+    ]);
+    if (seeded.rowCount === 0) {
+      throw new Error("ShopLite is not seeded: run `pnpm db:migrate && pnpm db:seed` in shoplite");
+    }
+    mcp = createMcpClient(customerTicket, env);
+  });
+
+  afterAll(async () => {
+    await mcp?.close();
+    await admin.$client.end();
+  });
+
+  it("loads the database and incidents tools through the MCP client", async () => {
+    const tools = await mcp.getTools();
+    expect(tools.map((tool) => tool.name).sort()).toEqual([
+      "describe_schema",
+      "get_incident",
+      "propose_data_fix",
+      "run_readonly_sql",
+      "save_incident",
+      "search_help_articles",
+      "search_similar_incidents",
+    ]);
+  });
+
+  it("gives Triage only search_help_articles and the Data Investigator the three database tools", async () => {
+    const tools = await mcp.getTools();
+    expect(selectTools(tools, triageToolNames).map((tool) => tool.name)).toEqual([
+      "search_help_articles",
+    ]);
+    expect(selectTools(tools, dataInvestigatorToolNames).map((tool) => tool.name)).toEqual([
+      "describe_schema",
+      "run_readonly_sql",
+      "propose_data_fix",
+    ]);
+    expect(() => selectTools(tools, ["search_logs"])).toThrow(/search_logs/);
+  });
+
+  it("starts the database server scoped to the customer Ticket's reporter", async () => {
+    const [runSql] = selectTools(await mcp.getTools(), ["run_readonly_sql"]);
+    if (!runSql) throw new Error("run_readonly_sql not loaded");
+    expect(runSql.description).toContain(`customer_id = '${ava.id}'`);
+
+    // Unscoped SQL is refused by the server and surfaces to the agent as a tool error it can correct.
+    await expect(
+      runSql.invoke({
+        sql: "SELECT status FROM shoplite.payments ORDER BY created_at DESC LIMIT 1",
+      }),
+    ).rejects.toThrow(/customer_id/);
+
+    const result = await runSql.invoke({
+      sql: `SELECT status, decline_code FROM shoplite.payments WHERE customer_id = '${ava.id}' ORDER BY created_at DESC LIMIT 1`,
+    });
+    expect(String(result)).toContain('"status": "declined"');
+  });
+
+  it("assembles the deep agent with a Postgres checkpointer in the portal schema", async () => {
+    const checkpointer = PostgresSaver.fromConnString(config.infra.databaseUrl, {
+      schema: "portal",
+    });
+    try {
+      await checkpointer.setup();
+      const { rows } = await admin.$client.query<{ table_name: string }>(
+        "SELECT table_name FROM information_schema.tables WHERE table_schema = 'portal' AND table_name LIKE 'checkpoint%' ORDER BY 1",
+      );
+      expect(rows.map((row) => row.table_name)).toContain("checkpoints");
+
+      const previous = process.env.OPENAI_API_KEY;
+      process.env.OPENAI_API_KEY = env.OPENAI_API_KEY;
+      try {
+        const resolver = createResolver({
+          config,
+          models: createModels(config),
+          tools: await mcp.getTools(),
+          checkpointer,
+        });
+        expect(resolver).toBeDefined();
+        const tuple = await checkpointer.getTuple({
+          configurable: { thread_id: `${customerTicket.id}:wiring` },
+        });
+        expect(tuple).toBeUndefined();
+      } finally {
+        if (previous === undefined) delete process.env.OPENAI_API_KEY;
+        else process.env.OPENAI_API_KEY = previous;
+      }
+    } finally {
+      await checkpointer.end();
+    }
+  });
+});

@@ -1,0 +1,7 @@
+{
+  "id": "50000000-0000-4000-8000-000000000002",
+  "source": "customer",
+  "reporterEmail": "ava.chen@example.com",
+  "title": "Checkout failed, money not deducted",
+  "body": "I tried to pay for my order a few minutes ago and got a red 'Checkout failed' message with no explanation. My banking app shows no charge. Did my order go through, and what went wrong?"
+}

@@ -23,11 +23,11 @@ Copy `.env.example` to `.env` to override any model name, threshold, or URL, and
 
 ```
 apps/            portal-api, portal-web, sentinel (added by later issues)
-packages/        shared (config, db client, migrations), mcp-database, mcp-incidents, mcp-observability, then agents
+packages/        shared (config, db client, migrations), mcp-database, mcp-incidents, mcp-observability, agents (Resolver, subagents, prompts, CLI)
 infra/grafana/   dashboards provisioned into the LGTM container's Grafana
 ```
 
-Tests ending in `.integration.test.ts` need Docker; everything else runs without it. The mcp-incidents MCP client test also needs `COHERE_API_KEY` and is skipped without it. The mcp-observability MCP client test also needs ShopLite running, since it generates the declined checkout it then looks for.
+Tests ending in `.integration.test.ts` need Docker; everything else runs without it. The mcp-incidents MCP client test also needs `COHERE_API_KEY` and is skipped without it. The mcp-observability MCP client test also needs ShopLite running, since it generates the declined checkout it then looks for. The agents end-to-end test needs `OPENAI_API_KEY` and `COHERE_API_KEY` and is skipped without them; its wiring test needs only Docker.
 
 ## ShopLite
 
@@ -88,3 +88,24 @@ REPORTER_EMAIL=ava.chen@example.com pnpm --filter @incident-resolver/mcp-observa
 ```
 
 Its integration tests generate one declined checkout against a running ShopLite, then drive every tool through the MCP client, polling the Prometheus-backed tools until ShopLite's next metric export lands.
+
+## Resolver
+
+`packages/agents` is the agent itself: the Resolver deep agent, its Triage and Data Investigator subagents, the prompts, and a CLI that runs one Ticket and prints the Verdict.
+
+- The Resolver is a Deep Agents JS agent on `gpt-5.4` with a Postgres checkpointer in the `portal` schema, one LangGraph thread per run. Triage and the Data Investigator are subagents on `gpt-5.4-mini`, reached through the `task` tool. Every model name comes from `packages/shared/src/config.ts`.
+- Triage's only tool is `search_help_articles`. It returns Zod-structured output: Category (`question`, `user_error`, `data_issue`, `code_bug`, `infra`, `unknown`), severity, component, hypothesis, Confidence, the matching Help article ids, and the best article's text.
+- Fast path: a `question` with a Help article at or above `CONFIDENCE_THRESHOLD` is answered from the article with Outcome `answered` and no Investigator run. Anything else goes to the Data Investigator, which uses the mcp-database tools through the MCP client and returns an Evidence summary with the SQL behind each fact, plus a data fix Proposal when a row is wrong.
+- The run ends with a Verdict in a Zod response format: Outcome, Category, Confidence, root cause, Evidence references, and the Reply. A Verdict below the threshold is escalated in code, whatever the model wrote.
+- Prompts are markdown in `packages/agents/prompts/` and are read from disk at startup, with `{{confidenceThreshold}}` filled from config.
+- Tracing is Langfuse v5: a `LangfuseSpanProcessor` in the OTel Node SDK plus the LangChain `CallbackHandler` on every invoke. The session id is the Ticket id, tags carry the Source, the model names, and the Category, and the subagent and tool spans nest under the run. Set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`; without them the run is untraced.
+- The MCP servers are spawned per run as stdio children from their own package directories, the way portal-api will spawn them. For a customer Ticket the database server is started with the Reporter's email, so every query is scoped to that customer and other emails are masked.
+
+The CLI takes a Ticket as JSON (`id`, `source`, `reporterEmail` for customers, optional `traceId`, `title`, `body`) and prints the Verdict, Triage, the subagents that ran, and whether the fast path was taken. Two demo Tickets ship with the package. It needs the compose stack, ShopLite migrated and seeded, `pnpm seed:incidents` done, and `OPENAI_API_KEY` and `COHERE_API_KEY` in `.env` or the shell.
+
+```bash
+pnpm resolve packages/agents/tickets/images-not-loading.json   # answered from the clear cache article, Triage only
+pnpm resolve packages/agents/tickets/declined-card.json        # answered from the payments table via the Data Investigator
+```
+
+Paths are relative to where you run the command. Pass `-` to read the Ticket from stdin, and `--thread <id>` to name the LangGraph thread; by default each run gets a fresh thread named after the Ticket id and the time. The declined-card Ticket assumes Ava Chen has a declined payment in ShopLite, which any checkout with a card ending in 0002 creates.

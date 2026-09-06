@@ -1,0 +1,7 @@
+{
+  "id": "50000000-0000-4000-8000-000000000001",
+  "source": "customer",
+  "reporterEmail": "ava.chen@example.com",
+  "title": "Product images stopped loading after the sale",
+  "body": "Since the weekend sale started, the pictures on the catalog page show up as broken grey boxes. I tried twice on my laptop, same thing. Everything else works: I can still open products and add them to my cart. How do I get the images back?"
+}
