@@ -10,6 +10,7 @@ import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
 import { type Anomaly, anomaliesIn, type SentinelThresholds, windowOf } from "./detect";
 import { type Evidence, gatherEvidence } from "./evidence";
 import type { OpenedTicket, PortalClient } from "./portal";
+import { type ReportLedger, reportsEverything } from "./recent";
 import type { TicketText, TicketWriter } from "./ticket-text";
 
 /**
@@ -45,16 +46,27 @@ export type SentinelDeps = {
   thresholds: SentinelThresholds;
   /** ShopLite's service.name: Prometheus's `job` and Loki's `service_name`. */
   serviceName: string;
+  /**
+   * What has just been reported, so the same window of failures is not filed twice. Shared
+   * across passes by the worker; a caller that passes nothing reports every detection.
+   */
+  reported?: ReportLedger | undefined;
 };
 
 export function createSentinelGraph(deps: SentinelDeps) {
   const window = windowOf(deps.thresholds);
+  const reported = deps.reported ?? reportsEverything;
 
   return new StateGraph(SentinelState)
     .addNode("watch", async () => {
       const vector = await deps.prometheus.query(errorRateByRouteQuery(deps.serviceName, window));
       const rates = errorRatesByRoute(vector, window);
-      return { rates, anomaly: anomaliesIn(rates, deps.thresholds)[0] ?? null };
+      // The worst route Sentinel has not just reported. A route it has is not healthy, it is
+      // already on a Ticket, so the next one down is the one worth looking at.
+      const found = anomaliesIn(rates, deps.thresholds).find(
+        (anomaly) => !reported.held(anomaly.fingerprint),
+      );
+      return { rates, anomaly: found ?? null };
     })
     .addNode("gather", async (state) => {
       // Metrics say a route is failing; the logs say what it said while failing, and carry
@@ -80,6 +92,7 @@ export function createSentinelGraph(deps: SentinelDeps) {
     })
     .addNode("open", async (state) => {
       if (!state.anomaly || !state.text) return {};
+      reported.hold(state.anomaly.fingerprint);
       return {
         opened: await deps.portal.openTicket({
           source: "sentinel",

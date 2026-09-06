@@ -9,6 +9,7 @@ import { getConfig, messageOf } from "@incident-resolver/shared";
 import { runSentinelPass, type SentinelDeps } from "./graph";
 import { createModelComposer } from "./model";
 import { createPortalClient } from "./portal";
+import { createReportLedger } from "./recent";
 import { createTicketWriter } from "./ticket-text";
 
 /**
@@ -48,6 +49,9 @@ const deps: SentinelDeps = {
   }),
   thresholds: config.sentinel,
   serviceName: config.shopliteServiceName,
+  // A detection covers the window it was measured over, and those requests stay inside it
+  // for that long, so one spike is one Ticket however often the worker polls.
+  reported: createReportLedger(config.sentinel.windowSeconds * 1000),
 };
 
 const { errorRatio, windowSeconds, minRequests, pollIntervalMs } = config.sentinel;

@@ -1,0 +1,6 @@
+{
+  "id": "50000000-0000-4000-8000-000000000005",
+  "source": "tester",
+  "title": "Checkout 500s when the cart is empty",
+  "body": "Testing checkout on Sofia Reyes's account (sofia.reyes@example.com). POST /customers/:customerId/checkout with an empty cart returns 500 'Internal Server Error' instead of a 400 telling me the cart is empty. It reproduces every time: open a fresh cart, add nothing, post a valid test card. The 400 path seems to be there in the response codes the API documents, so I think something before it is throwing."
+}

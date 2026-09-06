@@ -3,6 +3,7 @@ import type { NewTicket } from "@incident-resolver/shared";
 import { describe, expect, it } from "vitest";
 import { runSentinelPass, type SentinelDeps } from "./graph";
 import type { OpenedTicket, PortalClient } from "./portal";
+import { createReportLedger } from "./recent";
 import { createTicketWriter } from "./ticket-text";
 
 const thresholds = { errorRatio: 0.2, windowSeconds: 60, minRequests: 5 };
@@ -116,6 +117,41 @@ describe("one pass of Sentinel", () => {
     const pass = await runSentinelPass(deps);
 
     expect(pass.opened).toMatchObject({ created: false });
+  });
+
+  it("does not report the same window of failures twice", async () => {
+    // Ten seconds later the spike is still inside the sixty-second window, so a second pass
+    // sees the same requests. Filing them again would be a second Ticket about one problem,
+    // and the portal cannot stop it once the first Ticket has closed.
+    const { deps, filed } = sentinel({ reported: createReportLedger(60_000) });
+
+    await runSentinelPass(deps);
+    const second = await runSentinelPass(deps);
+
+    expect(filed).toHaveLength(1);
+    expect(second.anomaly).toBeNull();
+  });
+
+  it("still reports another route while one is held", async () => {
+    const { deps, filed } = sentinel({
+      reported: createReportLedger(60_000),
+      prometheus: {
+        query: async () => [
+          ...spiking,
+          sample("/products", "200", 10),
+          sample("/products", "500", 10),
+        ],
+        queryRange: async () => [],
+      },
+    });
+
+    await runSentinelPass(deps);
+    await runSentinelPass(deps);
+
+    expect(filed.map((ticket) => ticket.fingerprint)).toEqual([
+      `${checkout}:http_500`,
+      "/products:http_500",
+    ]);
   });
 
   it("takes the worst route when several are over the threshold", async () => {

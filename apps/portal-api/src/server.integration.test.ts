@@ -3,6 +3,7 @@ import { createDb, type Db, loadConfig, tickets } from "@incident-resolver/share
 import { inArray } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { Demo } from "./demo";
 import { createFakeResolver, FAKE_VERDICT } from "./fake-resolver";
 import type { ResolverEvent, TicketResolver } from "./resolver";
 import { createPortalApi } from "./server";
@@ -135,8 +136,8 @@ function openTicket(reporterEmail: string, title = "Checkout failed") {
 }
 
 /** A listening portal on a free port, and where to reach it. */
-async function startApi(resolver: TicketResolver): Promise<[FastifyInstance, string]> {
-  const started = createPortalApi({ db, config, resolver });
+async function startApi(resolver: TicketResolver, demo?: Demo): Promise<[FastifyInstance, string]> {
+  const started = createPortalApi({ db, config, resolver, ...(demo ? { demo } : {}) });
   await started.listen({ port: 0, host: "127.0.0.1" });
   const address = started.server.address();
   if (address === null || typeof address === "string") throw new Error("No port");
@@ -256,6 +257,106 @@ describe("creating a Ticket", () => {
   it("is a 404 for a Ticket that does not exist", async () => {
     const missing = await get<ErrorBody>("/tickets/00000000-0000-4000-8000-0000000000ff");
     expect(missing.status).toBe(404);
+  });
+});
+
+describe("the Demo panel", () => {
+  /** A Demo that answers without ShopLite or a database, so only the routes are under test. */
+  const scripted = (over: Partial<Demo> = {}): Demo => ({
+    reset: async () => ({
+      steps: [{ step: "ShopLite data", done: true, detail: "reseeded" }],
+      ok: true,
+    }),
+    simulateTraffic: async (body) => ({ status: 202, body: { echoed: body } }),
+    ...over,
+  });
+
+  it("relays a burst to ShopLite and answers with what ShopLite said", async () => {
+    const [api, url] = await startApi(createFakeResolver({ stepDelayMs: 0 }), scripted());
+    try {
+      const started = await post<{ echoed: unknown }>(`${url}/demo/simulate-traffic`, {
+        durationMs: 30_000,
+      });
+
+      expect(started.status).toBe(202);
+      expect(started.body).toEqual({ echoed: { durationMs: 30_000 } });
+    } finally {
+      await api.close();
+    }
+  });
+
+  it("passes ShopLite's own refusal through rather than rewording it", async () => {
+    const [api, url] = await startApi(
+      createFakeResolver({ stepDelayMs: 0 }),
+      scripted({
+        simulateTraffic: async () => ({
+          status: 409,
+          body: { error: "Traffic is already being simulated" },
+        }),
+      }),
+    );
+    try {
+      const refused = await post<ErrorBody>(`${url}/demo/simulate-traffic`, {});
+
+      expect(refused.status).toBe(409);
+      expect(refused.body.error).toBe("Traffic is already being simulated");
+    } finally {
+      await api.close();
+    }
+  });
+
+  it("answers a 502 when ShopLite cannot be reached at all", async () => {
+    const [api, url] = await startApi(
+      createFakeResolver({ stepDelayMs: 0 }),
+      scripted({
+        simulateTraffic: async () => {
+          throw new Error("connect ECONNREFUSED 127.0.0.1:4000");
+        },
+      }),
+    );
+    try {
+      const failed = await post<ErrorBody>(`${url}/demo/simulate-traffic`, {});
+
+      expect(failed.status).toBe(502);
+      expect(failed.body.message).toContain("ECONNREFUSED");
+    } finally {
+      await api.close();
+    }
+  });
+
+  it("resets, and reports each step", async () => {
+    const [api, url] = await startApi(createFakeResolver({ stepDelayMs: 0 }), scripted());
+    try {
+      const done = await post<{ ok: boolean; steps: unknown[] }>(`${url}/demo/reset`, {});
+
+      expect(done.status).toBe(200);
+      expect(done.body).toEqual({
+        ok: true,
+        steps: [{ step: "ShopLite data", done: true, detail: "reseeded" }],
+      });
+    } finally {
+      await api.close();
+    }
+  });
+
+  it("refuses to reset while a Ticket is still running", async () => {
+    // Deleting a Ticket out from under its own run leaves the run writing to something that
+    // is not there, so the panel is told to wait rather than being allowed to break a run.
+    const [api, url] = await startApi(createFakeResolver({ stepDelayMs: 200 }), scripted());
+    try {
+      await post<TicketBody>(`${url}/tickets`, {
+        source: "tester",
+        title: "Cart total wrong",
+        body: "Removing an item leaves the badge stale",
+      });
+
+      const refused = await post<ErrorBody>(`${url}/demo/reset`, {});
+
+      expect(refused.status).toBe(409);
+      expect(refused.body.message).toContain("still running");
+    } finally {
+      await api.close();
+    }
   });
 });
 

@@ -25,10 +25,14 @@
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
-    "typecheck": "tsc --noEmit -p tsconfig.json && pnpm -r --if-present typecheck"
+    "typecheck": "tsc --noEmit -p tsconfig.json && pnpm -r --if-present typecheck",
+    "demo:reset": "node --env-file-if-exists=.env --import tsx scripts/demo-reset.ts",
+    "scorecard": "node --env-file-if-exists=.env --import tsx scripts/scorecard.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.12",
+    "@incident-resolver/portal-api": "workspace:*",
+    "@incident-resolver/shared": "workspace:*",
     "@types/node": "22.20.1",
     "tsx": "4.23.13",
     "typescript": "5.9.3",

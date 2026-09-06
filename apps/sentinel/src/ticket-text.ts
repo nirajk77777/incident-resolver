@@ -15,7 +15,10 @@ const percent = (ratio: number) => `${Math.round(ratio * 100)}%`;
 
 /** The facts as text: what the model is given, and what the plain wording is built from. */
 export function sentinelBrief(anomaly: Anomaly, evidence: Evidence): string {
+  // A code with no responses behind it is a series the window has rolled past, not a fact
+  // about this spike, so it is left off rather than reported as a zero.
   const codes = Object.entries(anomaly.byStatusCode)
+    .filter(([, count]) => count > 0)
     .sort(([a], [b]) => Number(a) - Number(b))
     .map(([code, count]) => `${code}: ${count}`)
     .join(", ");

@@ -5,6 +5,7 @@ import {
   type Decision,
   formatIssues,
   isApprovalAction,
+  messageOf,
   newTicketSchema,
   reviewerDecisionSchema,
 } from "@incident-resolver/shared";
@@ -13,6 +14,7 @@ import { z } from "zod";
 import { type ApprovalRecord, createApprovalStore } from "./approvals";
 import { createTicketEventBus } from "./bus";
 import { createDataFixRunner } from "./data-fix";
+import { createDemo, type Demo } from "./demo";
 import type { TicketResolver } from "./resolver";
 import { createTicketRunner } from "./runner";
 import { noScores, type ScoreWriter } from "./scores";
@@ -32,6 +34,8 @@ export type PortalApiOptions = {
   config: Config;
   /** The Resolver every Ticket is run through, chosen by config in `main.ts`. */
   resolver: TicketResolver;
+  /** The rehearsal props behind the hidden Demo panel. Built from config by default. */
+  demo?: Demo;
   /** Where a Reviewer's Decisions and each Ticket's Outcome are scored. None by default. */
   scores?: ScoreWriter;
   logger?: boolean;
@@ -75,6 +79,7 @@ export function createPortalApi({
   db,
   config,
   resolver,
+  demo = createDemo({ db, config }),
   scores = noScores,
   logger = false,
 }: PortalApiOptions): FastifyInstance {
@@ -120,6 +125,39 @@ export function createPortalApi({
     grafanaUrl: config.infra.grafanaUrl,
     langfuseBaseUrl: config.infra.langfuseBaseUrl,
   }));
+
+  /**
+   * The two buttons on the portal's hidden Demo panel, and the only routes here that exist
+   * for a rehearsal rather than for the product. Traffic is relayed to ShopLite, status and
+   * all, so a burst already running comes back worded as ShopLite worded it.
+   */
+  app.post("/demo/simulate-traffic", async (request, reply) => {
+    try {
+      const answer = await demo.simulateTraffic(request.body ?? {});
+      return reply.code(answer.status).send(answer.body);
+    } catch (error) {
+      app.log.error({ err: error }, "Could not reach ShopLite to simulate traffic");
+      return reply.code(502).send({ error: "Bad Gateway", message: messageOf(error) });
+    }
+  });
+
+  /**
+   * Puts everything back: ShopLite reseeded, Tickets and their timelines, approvals,
+   * checkpoints and Workspaces cleared, Incidents kept. It refuses while a Ticket is still
+   * running, since deleting a Ticket out from under its own run leaves the run writing to
+   * something that is not there.
+   */
+  app.post("/demo/reset", async (_request, reply) => {
+    const running = runner.busy();
+    if (running > 0) {
+      return reply.code(409).send({
+        error: "Conflict",
+        message: `${running} ${running === 1 ? "Ticket is" : "Tickets are"} still running. Wait for them to close, then reset.`,
+      });
+    }
+    const report = await demo.reset();
+    return reply.code(report.ok ? 200 : 500).send(report);
+  });
 
   app.post("/tickets", async (request, reply) => {
     const parsed = newTicketSchema.safeParse(request.body);

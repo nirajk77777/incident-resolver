@@ -3,6 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "scripts": {
     "dev": "node --env-file-if-exists=../../.env --watch --import tsx src/main.ts",
     "start": "node --env-file-if-exists=../../.env --import tsx src/main.ts",

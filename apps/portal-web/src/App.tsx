@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { DemoPanel } from "./components/DemoPanel";
 import { fetchConfig, type PortalConfig } from "./lib/api";
 import { linkProps, useRoute } from "./lib/navigation";
 import { NewTicketPage } from "./pages/NewTicketPage";
@@ -9,6 +10,8 @@ import { TicketsPage } from "./pages/TicketsPage";
  * The portal: a queue, a Ticket, and the form that files one. The portal's own configuration
  * — which Resolver is running and where its traces live — is read once at startup and passed
  * down, so no page has to know what the API is configured with.
+ *
+ * The Demo panel sits over all of it, hidden until Ctrl + Alt + D asks for it.
  */
 export function App() {
   const [route, go] = useRoute();
@@ -65,6 +68,8 @@ export function App() {
         {route.page === "ticket" && <TicketPage id={route.id} config={config} go={go} />}
         {route.page === "new-ticket" && <NewTicketPage go={go} />}
       </main>
+
+      <DemoPanel />
     </div>
   );
 }

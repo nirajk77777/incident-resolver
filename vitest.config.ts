@@ -24,6 +24,9 @@ export default defineConfig({
           exclude: [...configDefaults.exclude, worktreesGlob],
           testTimeout: 30_000,
           hookTimeout: 60_000,
+          // Every integration file drives the same Postgres, and the demo reset clears it,
+          // so running two at once has one file emptying tables another is mid-run against.
+          fileParallelism: false,
         },
       },
     ],

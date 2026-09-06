@@ -33,8 +33,21 @@ describe("sentinelBrief", () => {
     expect(brief).toContain("/customers/:customerId/checkout");
     expect(brief).toContain("97%");
     expect(brief).toContain("100 requests");
-    expect(brief).toContain("500: 97");
+    expect(brief).toContain("201: 3, 500: 97");
     expect(brief).toContain("Reduce of empty array with no initial value");
+  });
+
+  it("leaves off a status code the window has rolled past, rather than reporting a zero", () => {
+    const brief = sentinelBrief({ ...anomaly, byStatusCode: { "402": 0, "500": 97 } }, evidence);
+
+    expect(brief).toContain("Responses by status code: 500: 97");
+    expect(brief).not.toContain("402");
+  });
+
+  it("says so plainly when there were no log lines to quote", () => {
+    const brief = sentinelBrief(anomaly, { traceIds: [], messages: [] });
+
+    expect(brief).toContain("No warn-or-above log lines were found in the window.");
   });
 });
 

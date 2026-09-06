@@ -11,6 +11,12 @@ importers:
       '@biomejs/biome':
         specifier: 2.5.12
         version: 2.5.12
+      '@incident-resolver/portal-api':
+        specifier: workspace:*
+        version: link:apps/portal-api
+      '@incident-resolver/shared':
+        specifier: workspace:*
+        version: link:packages/shared
       '@types/node':
         specifier: 22.20.1
         version: 22.20.1

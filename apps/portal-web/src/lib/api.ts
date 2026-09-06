@@ -1,3 +1,4 @@
+import type { ResetReport, TrafficPlan } from "./demo";
 import type { Approval, ReviewerDecision, Ticket, TimelineEntry } from "./tickets";
 
 /**
@@ -24,11 +25,23 @@ export type NewTicket = {
 async function read<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API}${path}`, init);
   if (!response.ok) {
-    const problem = (await response.json().catch(() => null)) as { message?: string } | null;
-    throw new Error(problem?.message ?? `${response.status} from ${path}`);
+    // A refusal is usually worded, either by the portal or by ShopLite behind it. The status
+    // is the last resort, since "409 from /demo/reset" tells a Reviewer nothing.
+    const problem = (await response.json().catch(() => null)) as {
+      message?: string;
+      error?: string;
+    } | null;
+    throw new Error(problem?.message ?? problem?.error ?? `${response.status} from ${path}`);
   }
   return (await response.json()) as T;
 }
+
+const post = <T>(path: string, body: unknown) =>
+  read<T>(path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
 
 export const fetchConfig = () => read<PortalConfig>("/config");
 
@@ -37,12 +50,16 @@ export const fetchTickets = () =>
 
 export const fetchTicket = (id: string) => read<Ticket>(`/tickets/${encodeURIComponent(id)}`);
 
-export const fileTicket = (ticket: NewTicket) =>
-  read<Ticket>("/tickets", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(ticket),
-  });
+export const fileTicket = (ticket: NewTicket) => post<Ticket>("/tickets", ticket);
+
+/**
+ * The hidden Demo panel's two buttons. The portal relays the burst to ShopLite and owns the
+ * reset, so the panel needs to know neither where ShopLite is nor what a reset consists of.
+ */
+export const simulateTraffic = (durationMs: number) =>
+  post<TrafficPlan>("/demo/simulate-traffic", { durationMs });
+
+export const resetDemo = () => post<ResetReport>("/demo/reset", {});
 
 /** Every Proposal this Ticket has raised, newest first, and what became of each. */
 export const fetchApprovals = (id: string) =>
@@ -55,11 +72,9 @@ export const fetchApprovals = (id: string) =>
  * carries the run on in the background, so what happens next arrives on the timeline.
  */
 export const decide = (id: string, decision: ReviewerDecision) =>
-  read<{ approval: Approval }>(`/tickets/${encodeURIComponent(id)}/decision`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(decision),
-  }).then((body) => body.approval);
+  post<{ approval: Approval }>(`/tickets/${encodeURIComponent(id)}/decision`, decision).then(
+    (body) => body.approval,
+  );
 
 /**
  * The live timeline. `lastEventId` is the sequence the page already holds, so a reconnect

@@ -52,6 +52,8 @@ export type TicketRunner = {
    * run then does arrives on the timeline like everything else.
    */
   decide(ticket: TicketRecord, answer: ReviewerDecision): Promise<DecisionResult>;
+  /** How many runs are in flight. A demo reset refuses while any Ticket is still running. */
+  busy(): number;
   /** Abandons every in-flight run and waits for them to unwind. */
   stop(): Promise<void>;
 };
@@ -318,6 +320,10 @@ export function createTicketRunner({
       );
       track(consume({ ...ticket, status: "acting" }, decided.run, "acting", stream));
       return { ok: true, approval: decided };
+    },
+
+    busy() {
+      return inFlight.size;
     },
 
     async stop() {
