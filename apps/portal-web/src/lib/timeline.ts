@@ -19,6 +19,8 @@ export type TimelineCard = {
   payload?: Record<string, unknown>;
   /** A subagent that has started and not yet ended: its card is still open. */
   pending?: boolean;
+  /** The tool did not answer the call. The detail is the reason, and it says which. */
+  failed?: boolean;
 };
 
 const text = (value: unknown): string | undefined =>
@@ -71,6 +73,9 @@ export function cardFor(entry: TimelineEntry): TimelineCard {
         detail: preview(payload.result),
         monoDetail: true,
         payload,
+        // The one tool result a Reviewer must not read as an answer. The tenant guard turning
+        // away an unscoped query lands here, and so does a tool that simply broke.
+        ...(payload.failed === true ? { failed: true } : {}),
       };
     case "message":
       return { kind: "message", heading: "Resolver", detail: text(payload.text) };

@@ -6,7 +6,7 @@ import {
   tickets,
   type Verdict,
 } from "@incident-resolver/shared";
-import { and, desc, eq, gt, max } from "drizzle-orm";
+import { and, desc, eq, gt, max, sql } from "drizzle-orm";
 import type { TimelineEntry } from "./timeline";
 
 /** A `portal.tickets` row. */
@@ -89,10 +89,13 @@ export function createPortalStore(db: Db): PortalStore {
     },
 
     ticketsForReporter(email) {
+      // Matched without regard to case: an email address is not case-sensitive, and the
+      // storefront asks with whatever the Reporter is signed in as. mcp-database resolves the
+      // same Reporter the same way, so one address is one person on both sides of the seam.
       return db
         .select()
         .from(tickets)
-        .where(eq(tickets.reporterEmail, email))
+        .where(sql`lower(${tickets.reporterEmail}) = lower(${email})`)
         .orderBy(desc(tickets.createdAt))
         .limit(TICKET_LIST_LIMIT);
     },

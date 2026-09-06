@@ -1,3 +1,4 @@
+import { messageOf } from "@incident-resolver/shared";
 import type { StreamEvent } from "@langchain/core/tracers/log_stream";
 import type { ResolverEvent } from "./resolver";
 
@@ -51,6 +52,28 @@ export function createEventTranslator(): EventTranslator {
       // A `task` call whose subagent was never named opened no card, so it closes none.
       if (event.name === TASK_TOOL) return undefined;
       return { type: "tool_result", name: event.name, result: resultOf(event.data.output) };
+    }
+
+    // A tool that did not answer. The MCP guards refuse a call by returning an error, which
+    // `@langchain/mcp-adapters` raises here, so this is where an unscoped query on a customer
+    // Ticket lands — and so does a query the database rejected, or a log search that timed
+    // out. The run carries on either way, since `toolErrorMiddleware` hands the model the
+    // message to correct; what the timeline must not do is leave the call looking answered.
+    //
+    // It says `failed` rather than `rejected` because that is all this event can honestly
+    // tell apart: the tracer reports the error as a string, so a guard's refusal and a broken
+    // connection arrive indistinguishable. The reason is on the card, and it says which.
+    if (event.event === "on_tool_error") {
+      // A subagent's own run failing closes no card: nothing came back, and an Investigator
+      // that never answered reads as still open, which is what `openSubagents` draws.
+      if (subagentByRun.delete(event.run_id)) return undefined;
+      if (event.name === TASK_TOOL) return undefined;
+      return {
+        type: "tool_result",
+        name: event.name,
+        result: resultOf(messageOf(event.data.error)),
+        failed: true,
+      };
     }
 
     return undefined;

@@ -46,6 +46,9 @@ async function collect(signal?: AbortSignal): Promise<ResolverEvent[]> {
   return drain(createFakeResolver().resolve({ ticket, run: 1, effects: spyEffects(), signal }));
 }
 
+/** The same Ticket as a tester would have opened it: no Reporter, and so no tenant scope. */
+const testerTicket = { ...ticket, source: "tester" as const, reporterEmail: undefined };
+
 /** The fake configured to propose a data fix, and the effects it will run it through. */
 function proposing(): { resolver: TicketResolver; effects: WriteEffects & { applied: string[] } } {
   return { resolver: createFakeResolver({ propose: staleTotal }), effects: spyEffects() };
@@ -60,11 +63,29 @@ describe("the fake Resolver", () => {
       "subagent_start",
       "tool_call",
       "tool_result",
+      "tool_call",
+      "tool_result",
       "subagent_end",
       "message",
       "verdict",
     ]);
     expect(events[0]).toMatchObject({ type: "subagent_start", name: "triage" });
+  });
+
+  it("has the tenant guard turn away the unscoped query it tries first", async () => {
+    const events = await collect();
+    const results = events.filter((event) => event.type === "tool_result");
+
+    expect(results[0]).toMatchObject({ name: "run_readonly_sql", failed: true });
+    expect(results[1]?.failed).toBeUndefined();
+  });
+
+  it("tries nothing unscoped on a tester Ticket, which has no customer to be scoped to", async () => {
+    const events = await drain(
+      createFakeResolver().resolve({ ticket: testerTicket, run: 1, effects: spyEffects() }),
+    );
+
+    expect(events.some((event) => event.type === "tool_result" && event.failed)).toBe(false);
   });
 
   it("ends with a Verdict the portal can close a Ticket from", async () => {

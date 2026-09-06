@@ -65,9 +65,12 @@ function RunRail({ entries, running }: { entries: TimelineEntry[]; running: bool
  * before the words do, and the face its heading is set in — names the machine gave itself are
  * set as such, the words it wrote for a person are not.
  */
+/** The tool marker's own shape, shared so a refused call is drawn as the same ring. */
+const TOOL_MARKER = "h-2 w-2 rounded-full border";
+
 const kinds: Record<TimelineCard["kind"], { marker: string; heading: string }> = {
   subagent: { marker: "h-2.5 w-2.5 rotate-45 bg-accent", heading: "font-mono" },
-  tool: { marker: "h-2 w-2 rounded-full border border-signal bg-card", heading: "font-mono" },
+  tool: { marker: `${TOOL_MARKER} border-signal bg-card`, heading: "font-mono" },
   message: { marker: "h-px w-3 bg-muted", heading: "font-sans tracking-tight" },
   interrupt: {
     marker: "h-2.5 w-2.5 rotate-45 border border-warn bg-warn/15",
@@ -107,12 +110,15 @@ function Entry({
     <li className="entry-enter grid grid-cols-[3.5rem_1fr] gap-x-3">
       <span className="pt-3 text-right font-mono text-[11px] text-muted">{elapsed}</span>
       <div className="relative border-l border-rule pb-4 pl-5">
-        <Marker kind={card.kind} />
-        <div className="border border-rule bg-card px-4 py-3">
+        <Marker kind={card.kind} failed={card.failed} />
+        <div className={`border bg-card px-4 py-3 ${card.failed ? "border-warn" : "border-rule"}`}>
           <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
             <h4 className={`m-0 text-[12.5px] font-semibold text-ink ${kinds[card.kind].heading}`}>
               {card.heading}
               {open && <span className="ml-2 font-sans text-[11px] text-accent">running</span>}
+              {card.failed && (
+                <span className="ml-2 font-sans text-[11px] text-warn">no answer</span>
+              )}
             </h4>
             {kindOf(entry.type) !== card.heading.toLowerCase() && (
               <span className="eyebrow">{kindOf(entry.type)}</span>
@@ -145,11 +151,14 @@ function detailFace(card: TimelineCard): string {
   return "text-[13.5px] text-muted";
 }
 
-function Marker({ kind }: { kind: TimelineCard["kind"] }) {
+function Marker({ kind, failed }: { kind: TimelineCard["kind"]; failed?: boolean }) {
+  // A call that did not answer keeps the tool ring and takes the warning colour, so the rail
+  // reads as a tool card that came back empty rather than as some other kind of entry.
+  const shape = failed ? `${TOOL_MARKER} border-warn bg-warn/25` : kinds[kind].marker;
   return (
     <span
       aria-hidden
-      className={`absolute top-4 -left-[5px] block ${kinds[kind].marker}`}
+      className={`absolute top-4 -left-[5px] block ${shape}`}
       style={kind === "status" ? { top: "1.1rem", left: "-3px" } : undefined}
     />
   );

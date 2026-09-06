@@ -117,6 +117,63 @@ describe("createEventTranslator", () => {
     ).toEqual({ type: "tool_result", name: "run_readonly_sql", result: { rowCount: 1 } });
   });
 
+  it("reports a tool that did not answer as a failed result, with its reason", () => {
+    const translate = createEventTranslator();
+    const refusal =
+      "MCP tool 'run_readonly_sql' on server 'database' returned an error: This is a customer " +
+      "Ticket, so every table that belongs to a customer must be filtered by the reporter. " +
+      "Unfiltered here: orders.";
+
+    translate(
+      streamEvent({
+        event: "on_tool_start",
+        name: "run_readonly_sql",
+        run_id: "sql-run",
+        data: { input: traced({ sql: "SELECT * FROM shoplite.orders" }) },
+      }),
+    );
+
+    expect(
+      translate(
+        streamEvent({
+          event: "on_tool_error",
+          name: "run_readonly_sql",
+          run_id: "sql-run",
+          data: { error: refusal },
+        }),
+      ),
+    ).toEqual({
+      type: "tool_result",
+      name: "run_readonly_sql",
+      result: refusal,
+      failed: true,
+    });
+  });
+
+  it("leaves the card of a subagent whose own run failed open, since nothing came back", () => {
+    const translate = createEventTranslator();
+
+    translate(
+      streamEvent({
+        event: "on_tool_start",
+        name: "task",
+        run_id: "task-run",
+        data: { input: traced({ subagent_type: "data-investigator" }) },
+      }),
+    );
+
+    expect(
+      translate(
+        streamEvent({
+          event: "on_tool_error",
+          name: "task",
+          run_id: "task-run",
+          data: { error: "the model ran out of time" },
+        }),
+      ),
+    ).toBeUndefined();
+  });
+
   it("keeps a tool result that is not JSON as its text", () => {
     const translate = createEventTranslator();
     const output = new ToolMessage({ content: "no lines matched", tool_call_id: "call-3" });

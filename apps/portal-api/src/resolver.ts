@@ -20,7 +20,8 @@ export type ResolverEvent =
   | { type: "subagent_start"; name: string }
   | { type: "subagent_end"; name: string; summary?: string }
   | { type: "tool_call"; name: string; args: unknown }
-  | { type: "tool_result"; name: string; result: unknown }
+  /** `failed` when the tool did not answer the call: a guard refused it, or it broke. */
+  | { type: "tool_result"; name: string; result: unknown; failed?: boolean }
   | { type: "message"; text: string }
   /**
    * A write the run cannot make on its own. The stream ends here and the run waits on the

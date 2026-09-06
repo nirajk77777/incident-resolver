@@ -235,11 +235,18 @@ describe("the live timeline", () => {
       "status",
       "tool_call",
       "tool_result",
+      "tool_call",
+      "tool_result",
       "subagent_end",
       "message",
       "verdict",
       "status",
     ]);
+    // The Investigator's first query was unscoped, and the guard turned it away: a customer
+    // Ticket's timeline says so rather than showing a call that answered nothing.
+    expect(
+      frames.filter((f) => f.data.type === "tool_result").map((f) => f.data.payload.failed),
+    ).toEqual([true, false]);
     expect(
       frames.filter((f) => f.data.type === "status").map((frame) => frame.data.payload.status),
     ).toEqual(["triaging", "investigating", "closed"]);
@@ -301,8 +308,8 @@ describe("Tickets running at once", () => {
       streamUntil(`/tickets/${second.body.id}/events`, isClosed),
     ]);
 
-    expect(firstFrames).toHaveLength(11);
-    expect(secondFrames).toHaveLength(11);
+    expect(firstFrames).toHaveLength(13);
+    expect(secondFrames).toHaveLength(13);
     // Each stream carries only its own Ticket's entries.
     expect(new Set(firstFrames.map((frame) => frame.id))).not.toEqual(
       new Set(secondFrames.map((frame) => frame.id)),
@@ -340,6 +347,17 @@ describe("what a Reporter can read", () => {
     expect(read.body.tickets).toHaveLength(1);
     expect(read.body.tickets[0]?.id).toBe(mine.body.id);
     expect(read.body.tickets[0]?.reply).toContain("declined");
+  });
+
+  it("finds them however the address was cased, since an email address is not case-sensitive", async () => {
+    const mineEmail = reporter("Mixed.Case");
+    const mine = await openTicket(mineEmail, "Checkout failed");
+
+    const read = await get<{ tickets: Array<{ id: string }> }>(
+      `/reporters/${encodeURIComponent(mineEmail.toUpperCase())}/tickets`,
+    );
+
+    expect(read.body.tickets.map((ticket) => ticket.id)).toEqual([mine.body.id]);
   });
 
   it("refuses an address that is not an email", async () => {

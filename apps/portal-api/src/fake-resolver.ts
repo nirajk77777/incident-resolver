@@ -1,4 +1,4 @@
-import type { Verdict } from "@incident-resolver/shared";
+import type { Ticket, Verdict } from "@incident-resolver/shared";
 import type { ResolverDecision, ResolverEvent, ResolverRun, TicketResolver } from "./resolver";
 
 /**
@@ -22,8 +22,8 @@ export const FAKE_VERDICT: Verdict = {
     "Thanks for reporting this. Your bank declined the payment for insufficient funds, which our checkout page reported only as a generic failure. Please try another card or top up the account and check out again.",
 };
 
-/** The fixed script, in order. The Verdict is appended by `resolve`. */
-const SCRIPT: ResolverEvent[] = [
+/** Triage, and the Data Investigator taking the Ticket on. */
+const OPENING: ResolverEvent[] = [
   { type: "subagent_start", name: "triage" },
   {
     type: "subagent_end",
@@ -31,6 +31,33 @@ const SCRIPT: ResolverEvent[] = [
     summary: "A checkout question from a customer, probably a declined card",
   },
   { type: "subagent_start", name: "data-investigator" },
+];
+
+/**
+ * What the Data Investigator tries first on a customer Ticket, and what mcp-database answers:
+ * a SELECT over every customer's orders, turned away because the server is scoped to the
+ * Reporter. The fake plays it so the tenant guard is visible on a demo running no model at
+ * all, and only on a customer Ticket, which is the only kind that has a scope. The refusal is
+ * the shape `unscopedReason` in mcp-database's SQL guard gives, without a real customer id.
+ */
+const UNSCOPED_ATTEMPT: ResolverEvent[] = [
+  {
+    type: "tool_call",
+    name: "run_readonly_sql",
+    args: { sql: "SELECT status, failure_reason FROM shoplite.orders LIMIT 5" },
+  },
+  {
+    type: "tool_result",
+    name: "run_readonly_sql",
+    result:
+      "This is a customer Ticket, so every table that belongs to a customer must be filtered " +
+      "by the reporter. Unfiltered here: orders.",
+    failed: true,
+  },
+];
+
+/** The query that is scoped to the Reporter, and what it finds. */
+const SCOPED_QUERY: ResolverEvent[] = [
   {
     type: "tool_call",
     name: "run_readonly_sql",
@@ -41,6 +68,10 @@ const SCRIPT: ResolverEvent[] = [
     name: "run_readonly_sql",
     result: { rowCount: 1, rows: [{ status: "payment_failed", failure_reason: "declined" }] },
   },
+];
+
+/** What the Investigator made of it, and what the Resolver says before its Verdict. */
+const CLOSING: ResolverEvent[] = [
   {
     type: "subagent_end",
     name: "data-investigator",
@@ -48,6 +79,12 @@ const SCRIPT: ResolverEvent[] = [
   },
   { type: "message", text: "The gateway declined the card, so nothing was charged." },
 ];
+
+/** The script this Ticket gets: a customer's has the refused query in it, a tester's does not. */
+function scriptFor(ticket: Ticket): ResolverEvent[] {
+  const scoped = ticket.source === "customer" ? UNSCOPED_ATTEMPT : [];
+  return [...OPENING, ...scoped, ...SCOPED_QUERY, ...CLOSING];
+}
 
 export type FakeResolverOptions = {
   /** Pause between events, so a demo timeline arrives one card at a time. */
@@ -125,11 +162,11 @@ export function createFakeResolver({
   return {
     name: "fake",
 
-    resolve({ signal }: ResolverRun) {
+    resolve({ ticket, signal }: ResolverRun) {
       const ending: ResolverEvent[] = propose
         ? [{ type: "interrupt", action: "apply_data_fix", args: { ...propose } }]
         : [{ type: "verdict", verdict: FAKE_VERDICT }];
-      return play([...SCRIPT, ...ending], signal);
+      return play([...scriptFor(ticket), ...ending], signal);
     },
 
     async *resume({ effects, signal }: ResolverRun, decision: ResolverDecision) {

@@ -70,6 +70,29 @@ describe("cardFor", () => {
     expect(card.payload).toBe(call.payload);
   });
 
+  it("marks a tool call that did not answer, and leads the card with the reason", () => {
+    const refused = entry("tool_result", {
+      name: "run_readonly_sql",
+      result: "Unfiltered here: orders.",
+      failed: true,
+    });
+    const card = cardFor(refused);
+
+    expect(card.kind).toBe("tool");
+    expect(card.failed).toBe(true);
+    expect(card.detail).toBe("Unfiltered here: orders.");
+  });
+
+  it("leaves a tool result that was answered unmarked", () => {
+    const answered = entry("tool_result", {
+      name: "run_readonly_sql",
+      result: { rowCount: 1 },
+      failed: false,
+    });
+
+    expect(cardFor(answered).failed).toBeUndefined();
+  });
+
   it("reads a Proposal as what it is waiting for", () => {
     expect(cardFor(entry("interrupt", { action: "propose_data_fix", proposal: {} }))).toMatchObject(
       { kind: "interrupt", heading: "propose_data_fix", detail: "Waiting for a Decision" },

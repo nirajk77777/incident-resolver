@@ -29,7 +29,10 @@ export function timelineEntryFor(event: TimelineResolverEvent): {
     case "tool_call":
       return { type: event.type, payload: { name: event.name, args: event.args } };
     case "tool_result":
-      return { type: event.type, payload: { name: event.name, result: event.result } };
+      return {
+        type: event.type,
+        payload: { name: event.name, result: event.result, failed: event.failed === true },
+      };
     case "message":
       return { type: event.type, payload: { text: event.text } };
     case "verdict":
