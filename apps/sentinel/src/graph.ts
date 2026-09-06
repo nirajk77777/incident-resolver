@@ -9,7 +9,7 @@ import { messageOf } from "@incident-resolver/shared";
 import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
 import { type Anomaly, anomaliesIn, type SentinelThresholds, windowOf } from "./detect";
 import { type Evidence, gatherEvidence } from "./evidence";
-import type { OpenedTicket, PortalClient } from "./portal";
+import type { PortalAnswer, PortalClient } from "./portal";
 import { type ReportLedger, reportsEverything } from "./recent";
 import type { TicketText, TicketWriter } from "./ticket-text";
 
@@ -30,7 +30,7 @@ const SentinelState = Annotation.Root({
   anomaly: Annotation<Anomaly | null>({ reducer: (_, next) => next, default: () => null }),
   evidence: Annotation<Evidence | null>({ reducer: (_, next) => next, default: () => null }),
   text: Annotation<TicketText | null>({ reducer: (_, next) => next, default: () => null }),
-  opened: Annotation<OpenedTicket | null>({ reducer: (_, next) => next, default: () => null }),
+  opened: Annotation<PortalAnswer | null>({ reducer: (_, next) => next, default: () => null }),
   /** What could not be read this pass. A pass says what it is missing rather than pretending. */
   warnings: Annotation<string[]>({ reducer: (_, next) => next, default: () => [] }),
 });
@@ -92,17 +92,18 @@ export function createSentinelGraph(deps: SentinelDeps) {
     })
     .addNode("open", async (state) => {
       if (!state.anomaly || !state.text) return {};
+      const opened = await deps.portal.openTicket({
+        source: "sentinel",
+        title: state.text.title,
+        body: state.text.body,
+        fingerprint: state.anomaly.fingerprint,
+        // The newest failing request, so the Ticket links straight to a real trace.
+        ...(state.evidence?.traceIds[0] ? { traceId: state.evidence.traceIds[0] } : {}),
+      });
+      // Held only once there is a Ticket. A portal that refused this one must not leave the
+      // problem unreported for the rest of the window: the next poll tries again.
       reported.hold(state.anomaly.fingerprint);
-      return {
-        opened: await deps.portal.openTicket({
-          source: "sentinel",
-          title: state.text.title,
-          body: state.text.body,
-          fingerprint: state.anomaly.fingerprint,
-          // The newest failing request, so the Ticket links straight to a real trace.
-          ...(state.evidence?.traceIds[0] ? { traceId: state.evidence.traceIds[0] } : {}),
-        }),
-      };
+      return { opened };
     })
     .addEdge(START, "watch")
     .addConditionalEdges("watch", (state) => (state.anomaly ? "gather" : END), ["gather", END])

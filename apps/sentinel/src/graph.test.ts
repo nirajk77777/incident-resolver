@@ -2,7 +2,7 @@ import type { LokiStream, PromVector } from "@incident-resolver/mcp-observabilit
 import type { NewTicket } from "@incident-resolver/shared";
 import { describe, expect, it } from "vitest";
 import { runSentinelPass, type SentinelDeps } from "./graph";
-import type { OpenedTicket, PortalClient } from "./portal";
+import type { PortalAnswer, PortalClient } from "./portal";
 import { createReportLedger } from "./recent";
 import { createTicketWriter } from "./ticket-text";
 
@@ -32,7 +32,7 @@ const logStream: LokiStream[] = [
 function sentinel(over: Partial<SentinelDeps> = {}) {
   const filed: NewTicket[] = [];
   const portal: PortalClient = {
-    async openTicket(ticket): Promise<OpenedTicket> {
+    async openTicket(ticket): Promise<PortalAnswer> {
       filed.push(ticket);
       return { id: "00000000-0000-4000-8000-000000000001", title: ticket.title, created: true };
     },
@@ -152,6 +152,32 @@ describe("one pass of Sentinel", () => {
       `${checkout}:http_500`,
       "/products:http_500",
     ]);
+  });
+
+  it("leaves the problem to the next poll when the portal refuses the Ticket", async () => {
+    // Holding a fingerprint before the Ticket exists would suppress the problem for the rest
+    // of the window and leave nothing on the queue to show for it.
+    const { deps } = sentinel({
+      reported: createReportLedger(60_000),
+      portal: {
+        openTicket: async () => {
+          throw new Error("The portal refused the Ticket: 503 no reason given");
+        },
+      },
+    });
+
+    await expect(runSentinelPass(deps)).rejects.toThrow("503");
+
+    const filed: NewTicket[] = [];
+    deps.portal = {
+      async openTicket(ticket) {
+        filed.push(ticket);
+        return { id: "00000000-0000-4000-8000-000000000003", title: ticket.title, created: true };
+      },
+    };
+    await runSentinelPass(deps);
+
+    expect(filed).toHaveLength(1);
   });
 
   it("takes the worst route when several are over the threshold", async () => {

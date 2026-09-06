@@ -1,5 +1,13 @@
 import { type WorkspaceStore, workspaceStoreFor } from "@incident-resolver/agents";
-import { type Config, type Db, incidents, messageOf, tickets } from "@incident-resolver/shared";
+import {
+  type Config,
+  type Db,
+  incidents,
+  messageOf,
+  type ResetReport,
+  type ResetStep,
+  tickets,
+} from "@incident-resolver/shared";
 import { count, sql } from "drizzle-orm";
 
 /**
@@ -11,15 +19,6 @@ import { count, sql } from "drizzle-orm";
  * ones plus whatever the agent has learned — and a rehearsal that wiped them would be
  * rehearsing a different system. Everything a run produced goes.
  */
-
-/** One thing a reset did, or could not do. A reset reports rather than throws. */
-export type ResetStep = { step: string; done: boolean; detail: string };
-
-export type ResetReport = {
-  steps: ResetStep[];
-  /** False when any step failed, which the panel shows and the script exits non-zero on. */
-  ok: boolean;
-};
 
 /** The LangGraph checkpointer's tables in the `portal` schema, one row per run thread. */
 const checkpointTables = ["checkpoint_writes", "checkpoint_blobs", "checkpoints"] as const;
@@ -45,7 +44,7 @@ export function createDemo({ db, config, workspaces, resetShoplite }: DemoOption
     resetShoplite ??
     (async () => {
       const { status, body } = await postToShoplite(config, "/demo/reset", undefined);
-      if (status !== 200) throw new Error(`ShopLite answered ${status}: ${describe(body)}`);
+      if (status !== 200) throw new Error(`ShopLite answered ${status}: ${refusalIn(body)}`);
     });
 
   return {
@@ -124,7 +123,7 @@ async function postToShoplite(
 }
 
 /** What ShopLite said went wrong, for a reset step's detail line. */
-function describe(body: unknown): string {
+function refusalIn(body: unknown): string {
   const said = (body as { error?: unknown } | null)?.error;
   return typeof said === "string" ? said : "no reason given";
 }

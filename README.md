@@ -58,11 +58,12 @@ servers, and every write it wants to make stops for a human first.
 
 ## Setup
 
-Requires Node 22 (see `.nvmrc`), pnpm 10, and Docker. Two commands, in this repository:
+Requires Node 22 (see `.nvmrc`), pnpm 10, and Docker. Two commands, in this repository, once the keys are in place:
 
 ```bash
-pnpm setup   # compose up, install, migrate, and seed the knowledge base. Needs COHERE_API_KEY
-pnpm dev     # portal-api on 5000, portal-web on 5001, sentinel watching Prometheus
+cp .env.example .env   # then fill in the keys below
+pnpm setup             # compose up, install, migrate, and seed the knowledge base
+pnpm dev               # portal-api on 5000, portal-web on 5001, sentinel watching Prometheus
 ```
 
 ShopLite is a separate repository ([ADR-0001](docs/adr/0001-shoplite-in-a-separate-repository.md))
@@ -403,9 +404,10 @@ line and the test. *Code RCA with no shell: two fixed commands, `run_tests` and
 **Simulate traffic**. Empty-cart checkouts start hitting ShopLite; the checkout route's error
 rate climbs on the Grafana dashboard. Within about twenty seconds a Ticket appears in the
 queue that nobody filed, titled after the route and the ratio, with the trace ids of the
-failures attached — and the same pipeline investigates it. Click **Simulate traffic** again:
-no second Ticket, because it is the same problem. *Proactive detection, and one Ticket per
-problem.*
+failures attached — and the same pipeline investigates it. Let the burst finish (ShopLite
+refuses a second one while the first is in flight) and press **Simulate traffic** again: no
+second Ticket, because it is the same problem, matched on the fingerprint of the route and
+the error. *Proactive detection, and one Ticket per problem.*
 
 Afterwards, open the Ticket's two trace links: the Resolver run in Langfuse, with a span per
 subagent and per tool call and a score for every Decision, and the ShopLite request in

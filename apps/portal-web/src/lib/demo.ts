@@ -1,3 +1,5 @@
+import type { ResetReport } from "@incident-resolver/shared";
+
 /**
  * The hidden Demo panel: the chord that reveals it, and how what the portal answered reads
  * on screen. Hidden because these two buttons are rehearsal props, not support desk work —
@@ -20,8 +22,11 @@ export function isDemoShortcut(event: Chord): boolean {
   );
 }
 
-/** How a burst came back: what the panel says, and whether it went well. */
-export type DemoOutcome = { tone: "done" | "problem"; headline: string; lines: string[] };
+/**
+ * What the panel says after a button. Deliberately not called an Outcome: that word is a
+ * Ticket's, and means one of answered, data fixed, fix proposed or escalated (CONTEXT.md).
+ */
+export type PanelResult = { tone: "done" | "problem"; headline: string; lines: string[] };
 
 /** What ShopLite answers a burst with, relayed by the portal. */
 export type TrafficPlan = {
@@ -31,7 +36,7 @@ export type TrafficPlan = {
   requests: number;
 };
 
-export function trafficStarted(plan: TrafficPlan): DemoOutcome {
+export function trafficStarted(plan: TrafficPlan): PanelResult {
   const seconds = Math.round(plan.durationMs / 1000);
   return {
     tone: "done",
@@ -43,11 +48,7 @@ export function trafficStarted(plan: TrafficPlan): DemoOutcome {
   };
 }
 
-/** One thing the reset did, as portal-api reports it. */
-export type ResetStep = { step: string; done: boolean; detail: string };
-export type ResetReport = { steps: ResetStep[]; ok: boolean };
-
-export function resetFinished(report: ResetReport): DemoOutcome {
+export function resetFinished(report: ResetReport): PanelResult {
   const failed = report.steps.filter((step) => !step.done);
   return {
     tone: report.ok ? "done" : "problem",
@@ -61,7 +62,7 @@ export function resetFinished(report: ResetReport): DemoOutcome {
 }
 
 /** What went wrong reaching the portal at all, or what the portal refused. */
-export function demoProblem(error: unknown): DemoOutcome {
+export function demoProblem(error: unknown): PanelResult {
   return {
     tone: "problem",
     headline: error instanceof Error ? error.message : String(error),

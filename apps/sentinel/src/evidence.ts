@@ -6,9 +6,16 @@ import {
 } from "@incident-resolver/mcp-observability";
 
 /**
- * What Sentinel attaches to the Ticket it opens: the trace ids of the failures it saw, so
- * the Log Investigator starts on a real request rather than on a search, and the messages
- * behind them. Metrics say a route is failing; only the logs say what it said while failing.
+ * What Sentinel attaches to the Ticket it opens: trace ids to follow, so the Log
+ * Investigator starts on a real request rather than on a search, and the messages behind
+ * them. Metrics say a route is failing; only the logs say what it said while failing.
+ *
+ * These are the service's warn-and-above lines from the window the spike was measured over,
+ * not that route's alone: a ShopLite log line carries the request's trace id but not the
+ * route pattern the metric is keyed on, so there is nothing honest to narrow by. During a
+ * spike they are overwhelmingly the spike, and the Ticket says only that they are what was
+ * being logged at the time. The Log Investigator is the one that establishes which request
+ * is which.
  */
 export type Evidence = {
   /** Trace ids to follow, newest first. */
@@ -64,10 +71,10 @@ export type EvidenceQuery = {
 };
 
 /**
- * Reads the warn-and-above lines of the window out of Loki. The window is the one the spike
- * was measured over, so what comes back is what was being logged while the route was failing.
- * A Loki that cannot be reached leaves the Ticket without trace ids rather than unopened:
- * the metric alone is worth telling someone about.
+ * Reads the service's warn-and-above lines for the window out of Loki. The window is the one
+ * the spike was measured over, so what comes back is what was being logged while the route
+ * was failing. A Loki that cannot be reached leaves the Ticket without trace ids rather than
+ * unopened: the metric alone is worth telling someone about.
  */
 export async function gatherEvidence(loki: LokiClient, query: EvidenceQuery): Promise<Evidence> {
   const logql = buildLogQuery({ serviceName: query.serviceName, level: "warn" });

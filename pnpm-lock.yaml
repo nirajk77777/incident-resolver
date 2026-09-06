@@ -130,6 +130,10 @@ importers:
       zod:
         specifier: 4.5.4
         version: 4.5.4
+    devDependencies:
+      '@incident-resolver/portal-api':
+        specifier: workspace:*
+        version: link:../portal-api
 
   packages/agents:
     dependencies:

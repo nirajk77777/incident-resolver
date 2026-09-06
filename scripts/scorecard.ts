@@ -64,21 +64,23 @@ async function file(bug: PlantedBug): Promise<string> {
   return opened.id;
 }
 
-/** Approves every Proposal this Ticket is waiting on, and says how many it approved. */
-async function approvePending(ticketId: string): Promise<number> {
+/**
+ * Approves the one Proposal this Ticket is waiting on. Only one: the decision endpoint acts
+ * on whichever Proposal the Ticket is paused at, and a second call while it carries that one
+ * out is a 409. If the run stops again, the next poll finds it.
+ */
+async function approvePending(ticketId: string): Promise<void> {
   const { approvals } = await portalJson<{ approvals: ApprovalState[] }>(
     `/tickets/${ticketId}/approvals`,
   );
-  const waiting = approvals.filter((approval) => approval.decision === null);
-  for (const approval of waiting) {
-    await portalJson(`/tickets/${ticketId}/decision`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ decision: "approve" }),
-    });
-    console.log(`      approved ${approval.action}`);
-  }
-  return waiting.length;
+  const waiting = approvals.find((approval) => approval.decision === null);
+  if (!waiting) return;
+  await portalJson(`/tickets/${ticketId}/decision`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ decision: "approve" }),
+  });
+  console.log(`      approved ${waiting.action}`);
 }
 
 /**

@@ -1,6 +1,7 @@
 export * from "./approval";
 export * from "./config";
 export * from "./db";
+export * from "./demo";
 export * from "./errors";
 export * from "./proposal";
 export * from "./redact";

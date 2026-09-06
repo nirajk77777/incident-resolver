@@ -16,5 +16,8 @@
     "@langchain/langgraph": "1.4.14",
     "@langchain/openai": "1.5.11",
     "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@incident-resolver/portal-api": "workspace:*"
   }
 }

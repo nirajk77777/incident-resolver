@@ -2,9 +2,9 @@ import { useEffect, useState } from "react";
 import { resetDemo, simulateTraffic } from "../lib/api";
 import {
   DEMO_SHORTCUT,
-  type DemoOutcome,
   demoProblem,
   isDemoShortcut,
+  type PanelResult,
   resetFinished,
   trafficStarted,
 } from "../lib/demo";
@@ -22,7 +22,7 @@ const BURST_MS = 30_000;
 export function DemoPanel() {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState<"traffic" | "reset" | null>(null);
-  const [outcome, setOutcome] = useState<DemoOutcome | null>(null);
+  const [result, setResult] = useState<PanelResult | null>(null);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -41,15 +41,15 @@ export function DemoPanel() {
 
   const run = async (which: "traffic" | "reset") => {
     setBusy(which);
-    setOutcome(null);
+    setResult(null);
     try {
-      setOutcome(
+      setResult(
         which === "traffic"
           ? trafficStarted(await simulateTraffic(BURST_MS))
           : resetFinished(await resetDemo()),
       );
     } catch (error) {
-      setOutcome(demoProblem(error));
+      setResult(demoProblem(error));
     } finally {
       setBusy(null);
     }
@@ -88,22 +88,24 @@ export function DemoPanel() {
         />
       </div>
 
-      {outcome && (
+      {result && (
         <div
           className={`border-t px-4 py-3 ${
-            outcome.tone === "problem" ? "border-warn/40 bg-warn/5" : "border-rule bg-well"
+            result.tone === "problem" ? "border-warn/40 bg-warn/5" : "border-rule bg-well"
           }`}
         >
           <p
             className={`m-0 text-[13px] font-medium ${
-              outcome.tone === "problem" ? "text-warn" : "text-ink"
+              result.tone === "problem" ? "text-warn" : "text-ink"
             }`}
           >
-            {outcome.headline}
+            {result.headline}
           </p>
-          {outcome.lines.length > 0 && (
+          {result.lines.length > 0 && (
             <ul className="m-0 mt-1.5 list-none space-y-1 p-0">
-              {outcome.lines.map((line) => (
+              {/* Each line begins with what it is about — a reset step's name, or one of
+                  two fixed sentences — so the text is the key. */}
+              {result.lines.map((line) => (
                 <li key={line} className="evidence text-muted">
                   {line}
                 </li>

@@ -1,11 +1,6 @@
+import type { ResetReport } from "@incident-resolver/shared";
 import { describe, expect, it } from "vitest";
-import {
-  demoProblem,
-  isDemoShortcut,
-  type ResetReport,
-  resetFinished,
-  trafficStarted,
-} from "./demo";
+import { demoProblem, isDemoShortcut, resetFinished, trafficStarted } from "./demo";
 
 const chord = (over: Partial<KeyboardEvent> = {}) =>
   ({

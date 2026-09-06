@@ -1,4 +1,4 @@
-import { messageOf, type NewTicket } from "@incident-resolver/shared";
+import type { NewTicket } from "@incident-resolver/shared";
 
 /**
  * How Sentinel opens a Ticket: over the portal's own HTTP surface, the same one the
@@ -7,7 +7,7 @@ import { messageOf, type NewTicket } from "@incident-resolver/shared";
  */
 
 /** What the portal answered: the Ticket, and whether this detection is what opened it. */
-export type OpenedTicket = {
+export type PortalAnswer = {
   id: string;
   title: string;
   /** False when the fingerprint was already on an open Ticket, which the portal says with a 200. */
@@ -15,7 +15,7 @@ export type OpenedTicket = {
 };
 
 export type PortalClient = {
-  openTicket(ticket: NewTicket): Promise<OpenedTicket>;
+  openTicket(ticket: NewTicket): Promise<PortalAnswer>;
 };
 
 export function createPortalClient(baseUrl: string): PortalClient {
@@ -30,11 +30,11 @@ export function createPortalClient(baseUrl: string): PortalClient {
         id?: string;
         title?: string;
         message?: string;
+        error?: string;
       } | null;
       if (!response.ok || !body?.id) {
-        throw new Error(
-          `The portal refused the Ticket: ${response.status} ${body?.message ?? messageOf(body)}`,
-        );
+        const said = body?.message ?? body?.error ?? "no reason given";
+        throw new Error(`The portal refused the Ticket: ${response.status} ${said}`);
       }
       // 201 is a Ticket this detection opened; 200 is the one already open on its fingerprint.
       return { id: body.id, title: body.title ?? ticket.title, created: response.status === 201 };

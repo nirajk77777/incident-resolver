@@ -1,4 +1,5 @@
-import type { ResetReport, TrafficPlan } from "./demo";
+import type { ResetReport } from "@incident-resolver/shared";
+import type { TrafficPlan } from "./demo";
 import type { Approval, ReviewerDecision, Ticket, TimelineEntry } from "./tickets";
 
 /**
