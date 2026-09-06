@@ -17,8 +17,8 @@ import {
   createResolver,
   freshThreadId,
   type Resolver,
-  type RunOutcome,
   type RunReport,
+  type RunStop,
   resolveTicket,
   resumeTicket,
 } from "./resolver";
@@ -188,15 +188,15 @@ describe.skipIf(!hasApiKeys)(
         interruptOn: interruptsFor(ticket),
       });
       const options = { resolver, ticket, threadId: freshThreadId(ticket), config, prompts };
-      const trace = (go: (callbacks: Callbacks) => Promise<RunOutcome>) =>
+      const trace = (go: (callbacks: Callbacks) => Promise<RunStop>) =>
         traceRun({ ticket, models: config.models, prompts }, go);
 
-      let outcome = await trace((callbacks) => resolveTicket({ ...options, callbacks }));
-      while (outcome.status === "paused") {
-        const approvals = outcome.proposals.map((): Decision => ({ type: "approve" }));
-        outcome = await trace((callbacks) => resumeTicket({ ...options, callbacks }, approvals));
+      let stop = await trace((callbacks) => resolveTicket({ ...options, callbacks }));
+      while (stop.at === "gate") {
+        const approvals = stop.proposals.map((): Decision => ({ type: "approve" }));
+        stop = await trace((callbacks) => resumeTicket({ ...options, callbacks }, approvals));
       }
-      return { report: outcome.report, applied };
+      return { report: stop.report, applied };
     }
 
     /**

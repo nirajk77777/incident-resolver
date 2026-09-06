@@ -13,7 +13,7 @@ import { promptVersions, resolvePrompts } from "./prompts";
 import {
   createResolver,
   freshThreadId,
-  type RunOutcome,
+  type RunStop,
   resolveTicket,
   resumeTicket,
 } from "./resolver";
@@ -121,18 +121,16 @@ async function main(): Promise<void> {
     log(`Resolving "${ticket.title}" on thread ${threadId} with ${config.models.resolver}`);
 
     const run = { resolver, ticket, threadId, config, prompts };
-    const trace = (go: (callbacks: Callbacks) => Promise<RunOutcome>) =>
+    const trace = (go: (callbacks: Callbacks) => Promise<RunStop>) =>
       traceRun({ ticket, models: config.models, prompts }, go);
 
-    let outcome = await trace((callbacks) => resolveTicket({ ...run, callbacks }));
-    while (outcome.status === "paused") {
-      const asked = outcome.proposals;
+    let stop = await trace((callbacks) => resolveTicket({ ...run, callbacks }));
+    while (stop.at === "gate") {
+      const asked = stop.proposals;
       log(`The gate stopped the run at ${asked.map((proposal) => proposal.name).join(", ")}`);
-      outcome = await trace((callbacks) =>
-        resumeTicket({ ...run, callbacks }, asked.map(unattended)),
-      );
+      stop = await trace((callbacks) => resumeTicket({ ...run, callbacks }, asked.map(unattended)));
     }
-    const { report } = outcome;
+    const { report } = stop;
 
     const seconds = ((Date.now() - startedAt) / 1000).toFixed(1);
     log(

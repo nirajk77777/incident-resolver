@@ -102,12 +102,12 @@ async function decide(options: ResolveOptions, decisions: Decision[]): Promise<v
 describe("a run that asks to write", () => {
   it("stops before the tool runs, holding the Proposal it asked about", async () => {
     const effects = spyEffects();
-    const outcome = await resolveTicket(gatedRun(effects));
+    const stop = await resolveTicket(gatedRun(effects));
 
-    expect(outcome.status).toBe("paused");
-    if (outcome.status !== "paused") return;
-    expect(outcome.proposals).toHaveLength(1);
-    expect(outcome.proposals[0]).toMatchObject({ name: "apply_data_fix", args: fix });
+    expect(stop.at).toBe("gate");
+    if (stop.at !== "gate") return;
+    expect(stop.proposals).toHaveLength(1);
+    expect(stop.proposals[0]).toMatchObject({ name: "apply_data_fix", args: fix });
     expect(effects.applied).toEqual([]);
   });
 

@@ -30,6 +30,14 @@ describe("what the portal will run", () => {
     expect(checkFix("DELETE FROM portal.tickets WHERE id = '1'").ok).toBe(false);
   });
 
+  it("refuses an UPDATE that reads a second table, whose rows it could not keep", () => {
+    const check = checkFix(
+      "UPDATE shoplite.cart_totals SET item_count = c.n FROM counts c WHERE c.cart_id = shoplite.cart_totals.cart_id",
+    );
+    expect(check.ok).toBe(false);
+    if (!check.ok) expect(check.reason).toMatch(/rollback|previewed/);
+  });
+
   it("refuses two statements sent as one, so nothing rides along behind the fix", () => {
     expect(
       checkFix(

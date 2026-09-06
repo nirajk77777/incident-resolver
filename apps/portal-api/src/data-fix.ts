@@ -1,6 +1,7 @@
 import { checkDataFixSql } from "@incident-resolver/mcp-database";
 import { messageOf } from "@incident-resolver/shared";
 import { Pool } from "pg";
+import { parse } from "pgsql-ast-parser";
 
 /**
  * Running an approved data fix. This is the only place in the system that writes ShopLite
@@ -45,11 +46,30 @@ type Row = Record<string, unknown>;
  * The static half of the guard, which needs no database: one UPDATE or DELETE with a WHERE
  * clause on a ShopLite table. Shared with mcp-database, so the Proposal the agent made and
  * the statement the portal runs are held to the same rule even after a Reviewer edits it.
+ *
+ * One rule is the portal's own. A statement that reads a second table — `UPDATE t SET … FROM
+ * u WHERE …` — is refused, because the rows it matches cannot then be read back by table and
+ * WHERE alone, and a fix whose rows cannot be shown to a Reviewer or kept for rollback is not
+ * one this portal will run.
  */
 export function checkFix(sql: string): FixStatement | FixRefused {
   const check = checkDataFixSql(sql);
   if (!check.ok) return check;
+  if (readsAnotherTable(sql)) {
+    return {
+      ok: false,
+      reason:
+        "A data fix must stand on its own table: an UPDATE ... FROM cannot be previewed or " +
+        "kept for rollback. Put what the other table gives you into the SET and WHERE as values.",
+    };
+  }
   return { ok: true, statement: check.statement, table: check.table, where: check.where };
+}
+
+/** Whether an UPDATE pulls in a second table through a FROM clause. */
+function readsAnotherTable(sql: string): boolean {
+  const [statement] = parse(sql);
+  return statement?.type === "update" && statement.from !== undefined && statement.from !== null;
 }
 
 /** Why a fix that matches this many rows must not run, or undefined when it may. */

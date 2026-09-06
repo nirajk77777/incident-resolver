@@ -71,7 +71,7 @@ const configSchema = z
       .string()
       .min(1)
       .default("postgres://shoplite_reader:shoplite_reader@localhost:5432/incident_resolver"),
-    // The role portal-api runs an approved data fix as, created by migration 0006. It can
+    // The role portal-api runs an approved data fix as, created by migration 0007. It can
     // UPDATE and DELETE in the shoplite schema and nothing else, so an approved fix is the
     // only write the agent's side of the system can reach.
     SHOPLITE_WRITE_DATABASE_URL: z

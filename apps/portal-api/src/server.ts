@@ -45,7 +45,7 @@ const reporterSchema = z.object({ email: z.email() });
  * a person with database access can undo a fix, and it is the one thing here that was never
  * masked, since a rollback needs the rows as they truly were.
  */
-function asReviewable(approval: ApprovalRecord) {
+function approvalBody(approval: ApprovalRecord) {
   return {
     id: approval.id,
     run: approval.run,
@@ -150,7 +150,7 @@ export function createPortalApi({
     if (!params.success) return reply.code(404).send({ error: "Not Found" });
     const ticket = await store.getTicket(params.data.id);
     if (!ticket) return reply.code(404).send({ error: "Not Found" });
-    return { approvals: (await approvals.forTicket(ticket.id)).map(asReviewable) };
+    return { approvals: (await approvals.forTicket(ticket.id)).map(approvalBody) };
   });
 
   /**
@@ -170,9 +170,10 @@ export function createPortalApi({
     }
     const result = await runner.decide(ticket, answer.data);
     if (!result.ok) {
-      return reply.code(result.status).send({ error: "Conflict", message: result.message });
+      const error = result.status === 400 ? "Bad Request" : "Conflict";
+      return reply.code(result.status).send({ error, message: result.message });
     }
-    return reply.code(202).send({ approval: asReviewable(result.approval) });
+    return reply.code(202).send({ approval: approvalBody(result.approval) });
   });
 
   /** What the storefront's "My tickets" page reads: one Reporter's Tickets and their Replies. */

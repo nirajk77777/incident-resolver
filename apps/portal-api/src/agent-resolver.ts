@@ -9,8 +9,9 @@ import {
   type LangfuseCredentials,
   langfusePromptFetcher,
   type Prompts,
-  type RunOutcome,
+  pendingProposals,
   type RunReport,
+  type RunStop,
   resolvePrompts,
   resumeTicket,
   startTracing,
@@ -20,7 +21,7 @@ import {
 import { argumentsOf, type Config, isApprovalAction, type Ticket } from "@incident-resolver/shared";
 import type { Callbacks } from "@langchain/core/callbacks/manager";
 import type { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
-import type { Decision } from "langchain";
+import type { ActionRequest, Decision } from "langchain";
 import { createEventTranslator } from "./agent-events";
 import { createEventQueue } from "./queue";
 import type { ResolverDecision, ResolverEvent, ResolverRun, TicketResolver } from "./resolver";
@@ -130,6 +131,14 @@ export function createAgentResolver({
         },
       };
 
+      // The graph reads one Decision per Proposal it is holding, and a Reviewer answers one
+      // at a time, so every other Proposal in the same batch is refused with a reason that
+      // sends the agent back to ask for it on its own. Nothing else could be done with it:
+      // the run cannot carry on holding a Proposal the Reviewer has not seen.
+      const answers = decision
+        ? decisionsFor(await pendingProposals(options), decision)
+        : undefined;
+
       const traced = traceRun(
         {
           ticket,
@@ -137,9 +146,9 @@ export function createAgentResolver({
           prompts,
           onTrace: (langfuseTraceId) => queue.push({ type: "trace", langfuseTraceId }),
         },
-        (callbacks: Callbacks): Promise<RunOutcome> =>
-          decision
-            ? resumeTicket({ ...options, callbacks }, [decisionFor(decision)])
+        (callbacks: Callbacks): Promise<RunStop> =>
+          answers
+            ? resumeTicket({ ...options, callbacks }, answers)
             : streamTicket({ ...options, callbacks }),
       );
       // However the run ends, the timeline stops with it; a failure is re-thrown by the
@@ -148,9 +157,9 @@ export function createAgentResolver({
       running.catch(() => {});
 
       for await (const event of queue) yield event;
-      const outcome = await running;
-      if (outcome.status === "paused") {
-        for (const proposal of outcome.proposals) {
+      const stop = await running;
+      if (stop.at === "gate") {
+        for (const proposal of stop.proposals) {
           if (!isApprovalAction(proposal.name)) {
             throw new Error(`The run stopped on ${proposal.name}, which is not a gated action`);
           }
@@ -158,8 +167,8 @@ export function createAgentResolver({
         }
         return;
       }
-      reportRun(ticket, outcome.report, log);
-      yield { type: "verdict", verdict: outcome.report.verdict };
+      reportRun(ticket, stop.report, log);
+      yield { type: "verdict", verdict: stop.report.verdict };
     } finally {
       await mcp.close();
     }
@@ -182,6 +191,27 @@ export function createAgentResolver({
       await tracing.shutdown();
     },
   };
+}
+
+/**
+ * One Decision per Proposal the graph is holding, in the order it raised them. The Reviewer's
+ * answer goes to the first Proposal for the action they answered; anything else the run asked
+ * for in the same turn is refused, since nobody has seen it.
+ */
+export function decisionsFor(pending: ActionRequest[], decision: ResolverDecision): Decision[] {
+  let answered = false;
+  return pending.map((proposal) => {
+    if (!answered && proposal.name === decision.action) {
+      answered = true;
+      return decisionFor(decision);
+    }
+    return {
+      type: "reject",
+      message:
+        "A Reviewer answered a different Proposal from this turn. Ask for this one on its own, " +
+        "once the run has carried out what they decided.",
+    };
+  });
 }
 
 /**

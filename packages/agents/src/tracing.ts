@@ -10,7 +10,7 @@ import {
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import type { LangfuseCredentials } from "./langfuse-prompts";
 import { type Prompts, promptVersions } from "./prompts";
-import type { RunOutcome } from "./resolver";
+import type { RunStop } from "./resolver";
 
 /**
  * Langfuse v5 rides on OpenTelemetry: a LangfuseSpanProcessor in the Node SDK exports every
@@ -74,8 +74,8 @@ export type TraceRunOptions = {
  */
 export function traceRun(
   { ticket, models, prompts, onTrace }: TraceRunOptions,
-  run: (callbacks: Callbacks) => Promise<RunOutcome>,
-): Promise<RunOutcome> {
+  run: (callbacks: Callbacks) => Promise<RunStop>,
+): Promise<RunStop> {
   const sessionId = ticket.id;
   const tags = traceTags(ticket, models);
   // Flat: Langfuse trace metadata is string-valued, so each prompt gets its own key.
@@ -104,20 +104,20 @@ export function traceRun(
         const { traceId } = span.otelSpan.spanContext();
         if (onTrace && traceId && !/^0+$/.test(traceId)) onTrace(traceId);
         const handler = new CallbackHandler({ sessionId, tags, traceMetadata: metadata });
-        const outcome = await run([handler]);
-        if (outcome.status === "finished") {
-          span.update({ output: outcome.report.verdict });
+        const stop = await run([handler]);
+        if (stop.at === "verdict") {
+          span.update({ output: stop.report.verdict });
           span.otelSpan.setAttribute(
             LangfuseOtelSpanAttributes.TRACE_TAGS,
-            traceTags(ticket, models, outcome.report.verdict.category),
+            traceTags(ticket, models, stop.report.verdict.category),
           );
         } else {
-          // A paused run has no Verdict yet: what it produced is the Proposals it is holding.
+          // A run held at the gate has no Verdict yet: what it produced is the Proposals.
           span.update({
-            output: { awaitingApproval: outcome.proposals.map((proposal) => proposal.name) },
+            output: { awaitingApproval: stop.proposals.map((proposal) => proposal.name) },
           });
         }
-        return outcome;
+        return stop;
       },
       { asType: "agent" },
     ),

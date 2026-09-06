@@ -162,13 +162,13 @@ const runConfig = ({ threadId, config, callbacks, signal }: ResolveOptions) => (
 });
 
 /**
- * Where a run stopped. A run either reaches its Verdict or stops at the gate holding one or
- * more Proposals; a caller with no way to decide on them must treat a pause as unfinished
- * work, not as a failure.
+ * Where a run stopped: at its Verdict, or at the gate holding one or more Proposals. Named
+ * away from Outcome and Status, which CONTEXT.md gives to the Ticket. A caller with no way to
+ * decide on a Proposal must treat a stop at the gate as unfinished work, not as a failure.
  */
-export type RunOutcome =
-  | { status: "finished"; report: RunReport }
-  | { status: "paused"; proposals: ActionRequest[] };
+export type RunStop =
+  | { at: "verdict"; report: RunReport }
+  | { at: "gate"; proposals: ActionRequest[] };
 
 export type StreamTicketOptions = ResolveOptions & {
   /**
@@ -180,7 +180,7 @@ export type StreamTicketOptions = ResolveOptions & {
 };
 
 /** Runs the Resolver on one Ticket and reports its Verdict, or the Proposal it stopped at. */
-export function resolveTicket(options: ResolveOptions): Promise<RunOutcome> {
+export function resolveTicket(options: ResolveOptions): Promise<RunStop> {
   return streamTicket(options);
 }
 
@@ -189,7 +189,7 @@ export function resolveTicket(options: ResolveOptions): Promise<RunOutcome> {
  * the `on_chain_end` of the outermost run, which is the run every other event descends from,
  * so the Verdict is read from the stream itself.
  */
-export function streamTicket(options: StreamTicketOptions): Promise<RunOutcome> {
+export function streamTicket(options: StreamTicketOptions): Promise<RunStop> {
   return streamFrom(agentInput(options.ticket), options);
 }
 
@@ -201,7 +201,7 @@ export function streamTicket(options: StreamTicketOptions): Promise<RunOutcome> 
 export function resumeTicket(
   options: StreamTicketOptions,
   decisions: Decision[],
-): Promise<RunOutcome> {
+): Promise<RunStop> {
   const response: HITLResponse = { decisions };
   return streamFrom(new Command({ resume: response }), options);
 }
@@ -209,7 +209,7 @@ export function resumeTicket(
 /** What the graph takes in: a first message, or a Command resuming a paused thread. */
 type AgentInput = Parameters<Resolver["streamEvents"]>[0];
 
-async function streamFrom(input: AgentInput, options: StreamTicketOptions): Promise<RunOutcome> {
+async function streamFrom(input: AgentInput, options: StreamTicketOptions): Promise<RunStop> {
   const { resolver, onEvent } = options;
   const stream = resolver.streamEvents(input, { ...runConfig(options), version: "v2" });
   let rootRunId: string | undefined;
@@ -232,11 +232,11 @@ async function streamFrom(input: AgentInput, options: StreamTicketOptions): Prom
 async function outcomeOf(
   finalState: FinalState | undefined,
   options: StreamTicketOptions | ResolveOptions,
-): Promise<RunOutcome> {
+): Promise<RunStop> {
   const proposals = await pendingProposals(options);
-  if (proposals.length > 0) return { status: "paused", proposals };
+  if (proposals.length > 0) return { at: "gate", proposals };
   if (!finalState) throw new Error("The Resolver stream ended without a final state");
-  return { status: "finished", report: reportFor(finalState, options) };
+  return { at: "verdict", report: reportFor(finalState, options) };
 }
 
 /**
@@ -246,8 +246,16 @@ async function outcomeOf(
  */
 type PendingTasks = { tasks: ReadonlyArray<{ interrupts: ReadonlyArray<{ value?: unknown }> }> };
 
-/** Everything the gate is holding on this thread, oldest first. */
-async function pendingProposals({ resolver, threadId }: ResolveOptions): Promise<ActionRequest[]> {
+/**
+ * Everything the gate is holding on this thread, oldest first. Exported because the caller
+ * resuming a run has to answer every Proposal the graph is waiting on, not only the one a
+ * Reviewer looked at: the middleware reads one Decision per request, and a short array leaves
+ * the run stranded on the thread.
+ */
+export async function pendingProposals({
+  resolver,
+  threadId,
+}: ResolveOptions): Promise<ActionRequest[]> {
   const snapshot = (await resolver.getState({
     configurable: { thread_id: threadId },
   })) as unknown as PendingTasks;
