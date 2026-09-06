@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { durationSchema, parseDuration } from "./duration";
+import { durationSchema, isoFromNanos, parseDuration } from "./time";
 
 describe("parseDuration", () => {
   it.each([
@@ -23,5 +23,11 @@ describe("durationSchema", () => {
   it("accepts the same strings and keeps them as strings for the backing query", () => {
     expect(durationSchema.parse("5m")).toBe("5m");
     expect(durationSchema.safeParse("five minutes").success).toBe(false);
+  });
+});
+
+describe("isoFromNanos", () => {
+  it("converts a nanosecond epoch string to an ISO timestamp at millisecond precision", () => {
+    expect(isoFromNanos("1788693091060180167")).toBe("2026-09-06T11:11:31.060Z");
   });
 });

@@ -102,6 +102,7 @@ const trace: OtlpTrace = {
                 { key: "db.ok", value: { boolValue: true } },
                 { key: "db.ratio", value: { doubleValue: 0.5 } },
                 { key: "db.tags", value: { arrayValue: { values: [{ stringValue: "a" }] } } },
+                { key: "db.big", value: { intValue: "4242424242424242424" } },
               ],
               status: {},
             },
@@ -167,6 +168,7 @@ describe("summarizeTrace", () => {
       "db.ok": true,
       "db.ratio": 0.5,
       "db.tags": ["a"],
+      "db.big": "4242424242424242424",
     });
   });
 

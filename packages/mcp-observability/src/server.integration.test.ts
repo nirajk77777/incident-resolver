@@ -13,8 +13,7 @@ import type { TraceSummary } from "./tempo";
 //
 // One declined checkout is generated against ShopLite, then every assertion goes through
 // the MCP client over stdio, the way portal-api will use the server. ShopLite exports
-// metrics on the OTel default interval of 60s, so the Prometheus-backed tools poll for up
-// to two and a half minutes before giving up.
+// metrics every 10s by default, so the Prometheus-backed assertions poll for a while.
 
 const packageDir = fileURLToPath(new URL("..", import.meta.url));
 const config = loadConfig();
@@ -32,7 +31,7 @@ const syntheticService = "mcp-observability-test";
 const syntheticTraceId = "0f1e2d3c4b5a69788796a5b4c3d2e1f0";
 const syntheticLine = `card ${declinedCard.number} for ${liam.email} and ${ava.email} declined`;
 
-const metricsTimeoutMs = 150_000;
+const metricsTimeoutMs = 90_000;
 
 async function startServer(env: Record<string, string> = {}): Promise<Client> {
   const client = new Client({ name: "mcp-observability-test", version: "0.0.0" });
@@ -153,6 +152,7 @@ describe("mcp-observability over the MCP client", () => {
       expect(result.logql).toBe(
         `{service_name="${config.shopliteServiceName}"} | trace_id="${traceId}"`,
       );
+      expect(result.since).toBe("24h");
       const decline = result.lines.find((line) => line.message === declineLine);
       expect(decline).toMatchObject({
         level: "warn",
@@ -233,7 +233,7 @@ describe("mcp-observability over the MCP client", () => {
     it("fails clearly for an unknown id", async () => {
       const reply = await call(client, "get_trace", { traceId: "0".repeat(32) });
       expect(reply.isError).toBe(true);
-      expect(reply.text).toContain("No trace");
+      expect(reply.text).toMatch(/no trace with id/i);
     });
   });
 
@@ -258,6 +258,29 @@ describe("mcp-observability over the MCP client", () => {
         expect(rate.errorRate).toBeLessThanOrEqual(1);
         expect(rate.byStatusCode["402"]).toBeGreaterThanOrEqual(1);
         expect(rate.serverErrorRate).toBeLessThanOrEqual(rate.errorRate);
+      },
+      metricsTimeoutMs + 10_000,
+    );
+
+    it(
+      "counts at Sentinel's 60s window, which is only a few export intervals wide",
+      async () => {
+        await post(`/customers/${ava.id}/cart/items`, { productId: mug });
+        const checkout = await post(`/customers/${ava.id}/checkout`, { card: declinedCard });
+        expect(checkout.status).toBe(402);
+        const rate = await pollUntil(
+          "the fresh 402 inside a 60s window",
+          async () => {
+            const found = await callJson<ErrorRate>(client, "get_error_rate", {
+              route: checkoutRoute,
+              window: "60s",
+            });
+            return found.byStatusCode["402"] ? found : undefined;
+          },
+          metricsTimeoutMs,
+        );
+        expect(Number.isInteger(rate.requests)).toBe(true);
+        expect(rate.errorRate).toBeGreaterThan(0);
       },
       metricsTimeoutMs + 10_000,
     );

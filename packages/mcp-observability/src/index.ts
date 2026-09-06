@@ -1,8 +1,9 @@
-export { durationSchema, parseDuration } from "./duration";
 export { buildLogQuery, createLokiClient, type LogEntry, type LogLevel, logLevels } from "./loki";
 export {
+  checkoutErrorsQuery,
   createPrometheusClient,
   type ErrorRate,
+  errorRateByRouteQuery,
   errorRateFrom,
   errorRateQuery,
 } from "./prometheus";
@@ -14,3 +15,4 @@ export {
   type RecentErrorsResult,
 } from "./server";
 export { createTempoClient, type SpanSummary, summarizeTrace, type TraceSummary } from "./tempo";
+export { durationSchema, parseDuration } from "./time";

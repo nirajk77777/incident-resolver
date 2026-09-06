@@ -1,4 +1,5 @@
-import { parseDuration } from "./duration";
+import { quoted } from "./escape";
+import { isoFromNanos, parseDuration } from "./time";
 
 /** Log levels a search can ask for. A level means that level and above. */
 export const logLevels = ["debug", "info", "warn", "error"] as const;
@@ -20,19 +21,15 @@ export type LogQueryInput = {
  * evaluating the structured-metadata filters, which is the cheap order.
  */
 export function buildLogQuery(input: LogQueryInput): string {
-  const stages = [`{service_name=${quote(input.serviceName)}}`];
+  const stages = [`{service_name=${quoted(input.serviceName)}}`];
   const query = input.query?.trim();
-  if (query) stages.push(`|~ ${quote(`(?i)${escapeRegex(query)}`)}`);
+  if (query) stages.push(`|~ ${quoted(`(?i)${escapeRegex(query)}`)}`);
   if (input.level) {
     const from = severityOrder.indexOf(input.level);
-    stages.push(`| detected_level=~${quote(severityOrder.slice(from).join("|"))}`);
+    stages.push(`| detected_level=~${quoted(severityOrder.slice(from).join("|"))}`);
   }
-  if (input.traceId) stages.push(`| trace_id=${quote(input.traceId)}`);
+  if (input.traceId) stages.push(`| trace_id=${quoted(input.traceId)}`);
   return stages.join(" ");
-}
-
-function quote(value: string): string {
-  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
 function escapeRegex(value: string): string {
@@ -91,10 +88,6 @@ export function flattenStreams(streams: LokiStream[]): LogEntry[] {
   }
   entries.sort((a, b) => (a.nanos === b.nanos ? 0 : a.nanos > b.nanos ? -1 : 1));
   return entries.map(({ nanos: _, ...entry }) => entry);
-}
-
-export function isoFromNanos(nanos: string): string {
-  return new Date(Number(BigInt(nanos) / 1_000_000n)).toISOString();
 }
 
 export type LokiClient = {

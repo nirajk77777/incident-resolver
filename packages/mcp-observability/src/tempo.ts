@@ -1,4 +1,4 @@
-import { isoFromNanos } from "./loki";
+import { isoFromNanos } from "./time";
 
 /**
  * The shape Tempo's `GET /api/traces/:id` returns: OTLP JSON with base64 ids, one batch
@@ -47,6 +47,9 @@ export type SpanSummary = {
   events?: Array<{ time: string; name: string; attributes: Record<string, AttributeValue> }>;
 };
 
+/** A span with the raw nanosecond bounds kept for ordering and duration arithmetic. */
+type TimedSpan = SpanSummary & { startNanos: bigint; endNanos: bigint };
+
 export type TraceSummary = {
   traceId: string;
   rootSpan: string | undefined;
@@ -65,7 +68,7 @@ export type TraceSummary = {
 
 /** Reduces Tempo's OTLP JSON to what an investigator needs to read a request. */
 export function summarizeTrace(traceId: string, trace: OtlpTrace): TraceSummary {
-  const spans: Array<SpanSummary & { startNanos: bigint; endNanos: bigint }> = [];
+  const spans: TimedSpan[] = [];
   for (const batch of trace.batches) {
     const resource = attributesOf(batch.resource?.attributes);
     const service =
@@ -108,13 +111,10 @@ export function summarizeTrace(traceId: string, trace: OtlpTrace): TraceSummary 
   };
 }
 
-function summarizeSpan(
-  span: OtlpSpan,
-  service: string | undefined,
-): SpanSummary & { startNanos: bigint; endNanos: bigint } {
+function summarizeSpan(span: OtlpSpan, service: string | undefined): TimedSpan {
   const startNanos = BigInt(span.startTimeUnixNano);
   const endNanos = BigInt(span.endTimeUnixNano);
-  const summary: SpanSummary & { startNanos: bigint; endNanos: bigint } = {
+  const summary: TimedSpan = {
     spanId: hexFromBase64(span.spanId),
     parentSpanId: span.parentSpanId ? hexFromBase64(span.parentSpanId) : undefined,
     name: span.name,
@@ -155,7 +155,11 @@ function attributesOf(attributes: OtlpAttribute[] | undefined): Record<string, A
 
 function plainValue(value: OtlpValue): AttributeValue | undefined {
   if (value.stringValue !== undefined) return value.stringValue;
-  if (value.intValue !== undefined) return Number(value.intValue);
+  if (value.intValue !== undefined) {
+    // OTLP ints are 64-bit; one that does not fit a JS number stays a string so no digit is lost.
+    const n = Number(value.intValue);
+    return Number.isSafeInteger(n) ? n : value.intValue;
+  }
   if (value.doubleValue !== undefined) return value.doubleValue;
   if (value.boolValue !== undefined) return value.boolValue;
   if (value.arrayValue) {
