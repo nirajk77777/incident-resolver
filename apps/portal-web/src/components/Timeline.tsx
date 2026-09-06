@@ -60,15 +60,22 @@ function RunRail({ entries, running }: { entries: TimelineEntry[]; running: bool
   );
 }
 
-/** The mark on the rail. Its shape says what kind of entry this is, before the words do. */
-const markers: Record<TimelineCard["kind"], string> = {
-  subagent: "h-2.5 w-2.5 rotate-45 bg-accent",
-  tool: "h-2 w-2 rounded-full border border-signal bg-card",
-  message: "h-px w-3 bg-muted",
-  interrupt: "h-2.5 w-2.5 rotate-45 border border-warn bg-warn/15",
-  decision: "h-2.5 w-2.5 rotate-45 bg-warn",
-  verdict: "h-3 w-3 bg-ink",
-  status: "h-1.5 w-1.5 rounded-full bg-rule",
+/**
+ * How each kind of entry is drawn: the mark on the rail, whose shape says what the entry is
+ * before the words do, and the face its heading is set in — names the machine gave itself are
+ * set as such, the words it wrote for a person are not.
+ */
+const kinds: Record<TimelineCard["kind"], { marker: string; heading: string }> = {
+  subagent: { marker: "h-2.5 w-2.5 rotate-45 bg-accent", heading: "font-mono" },
+  tool: { marker: "h-2 w-2 rounded-full border border-signal bg-card", heading: "font-mono" },
+  message: { marker: "h-px w-3 bg-muted", heading: "font-sans tracking-tight" },
+  interrupt: {
+    marker: "h-2.5 w-2.5 rotate-45 border border-warn bg-warn/15",
+    heading: "font-mono",
+  },
+  decision: { marker: "h-2.5 w-2.5 rotate-45 bg-warn", heading: "font-mono" },
+  verdict: { marker: "h-3 w-3 bg-ink", heading: "font-sans tracking-[0.14em] uppercase" },
+  status: { marker: "h-1.5 w-1.5 rounded-full bg-rule", heading: "font-sans" },
 };
 
 function Entry({
@@ -103,7 +110,7 @@ function Entry({
         <Marker kind={card.kind} />
         <div className="border border-rule bg-card px-4 py-3">
           <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-            <h4 className={`m-0 text-[12.5px] font-semibold text-ink ${headingFace[card.kind]}`}>
+            <h4 className={`m-0 text-[12.5px] font-semibold text-ink ${kinds[card.kind].heading}`}>
               {card.heading}
               {open && <span className="ml-2 font-sans text-[11px] text-accent">running</span>}
             </h4>
@@ -113,6 +120,14 @@ function Entry({
           </div>
           {card.detail && (
             <p className={`mt-2 mb-0 leading-relaxed ${detailFace(card)}`}>{card.detail}</p>
+          )}
+          {card.reply && (
+            <div className="mt-3">
+              <span className="eyebrow">Reply</span>
+              <blockquote className="m-0 mt-1.5 border-l-2 border-accent pl-3 font-serif text-[15px] leading-relaxed text-ink">
+                {card.reply}
+              </blockquote>
+            </div>
           )}
           {card.payload && <Payload payload={card.payload} />}
         </div>
@@ -124,17 +139,6 @@ function Entry({
 /** What kind of entry this is, in words. Left off when the card's own heading already says it. */
 const kindOf = (type: TimelineEntry["type"]) => type.replace(/_/g, " ");
 
-/** Names the machine gave itself are set as such; the words it wrote for a person are not. */
-const headingFace: Record<TimelineCard["kind"], string> = {
-  subagent: "font-mono",
-  tool: "font-mono",
-  message: "font-sans tracking-tight",
-  interrupt: "font-mono",
-  decision: "font-mono",
-  verdict: "font-sans tracking-[0.14em] uppercase",
-  status: "font-sans",
-};
-
 function detailFace(card: TimelineCard): string {
   if (card.monoDetail) return "evidence [overflow-wrap:anywhere] text-ink/70";
   if (card.kind === "verdict" || card.kind === "message") return "font-serif text-[15px] text-ink";
@@ -145,7 +149,7 @@ function Marker({ kind }: { kind: TimelineCard["kind"] }) {
   return (
     <span
       aria-hidden
-      className={`absolute top-4 -left-[5px] block ${markers[kind]}`}
+      className={`absolute top-4 -left-[5px] block ${kinds[kind].marker}`}
       style={kind === "status" ? { top: "1.1rem", left: "-3px" } : undefined}
     />
   );

@@ -1,5 +1,5 @@
 import { type MouseEvent, useCallback, useEffect, useState } from "react";
-import { hrefFor, parseRoute, type Route } from "./lib/routes";
+import { hrefFor, parseRoute, type Route } from "./routes";
 
 /**
  * The portal's own routing: three pages, the address bar as the state, and the back button

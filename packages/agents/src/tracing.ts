@@ -1,4 +1,4 @@
-import type { Config, IncidentCategory, Ticket, Verdict } from "@incident-resolver/shared";
+import type { Config, IncidentCategory, Ticket } from "@incident-resolver/shared";
 import type { Callbacks } from "@langchain/core/callbacks/manager";
 import { CallbackHandler } from "@langfuse/langchain";
 import { LangfuseSpanProcessor } from "@langfuse/otel";
@@ -10,6 +10,7 @@ import {
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import type { LangfuseCredentials } from "./langfuse-prompts";
 import { type Prompts, promptVersions } from "./prompts";
+import type { RunReport } from "./resolver";
 
 /**
  * Langfuse v5 rides on OpenTelemetry: a LangfuseSpanProcessor in the Node SDK exports every
@@ -67,10 +68,10 @@ export type TraceRunOptions = {
  * the Category is written onto the root span once the Verdict is in, since trace tags are read
  * from any span.
  */
-export function traceRun<T extends { verdict: Verdict }>(
+export function traceRun(
   { ticket, models, prompts, onTrace }: TraceRunOptions,
-  run: (callbacks: Callbacks) => Promise<T>,
-): Promise<T> {
+  run: (callbacks: Callbacks) => Promise<RunReport>,
+): Promise<RunReport> {
   const sessionId = ticket.id;
   const tags = traceTags(ticket, models);
   // Flat: Langfuse trace metadata is string-valued, so each prompt gets its own key.

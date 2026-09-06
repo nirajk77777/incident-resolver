@@ -1,51 +1,29 @@
+import type {
+  EvidenceReference,
+  IncidentCategory,
+  Outcome,
+  TicketEventType,
+  TicketSource,
+  TicketStatus,
+  tickets,
+} from "@incident-resolver/shared";
+
 /**
- * The vocabulary of CONTEXT.md as the portal serves it, and the small amount of reasoning
- * the views do over it. Kept apart from the components so the rules that decide what a
- * Reviewer reads — what a card is called, when a run is still going — can be tested.
+ * The vocabulary of CONTEXT.md, and the small amount of reasoning the views do over it. The
+ * types come from `@incident-resolver/shared`, which owns them: the imports are type-only, so
+ * nothing of the database client they sit next to reaches the browser bundle.
  */
+export type {
+  EvidenceReference,
+  IncidentCategory,
+  Outcome,
+  TicketEventType,
+  TicketSource,
+  TicketStatus,
+};
 
-export const ticketStatuses = [
-  "new",
-  "triaging",
-  "investigating",
-  "awaiting_approval",
-  "acting",
-  "closed",
-] as const;
-export type TicketStatus = (typeof ticketStatuses)[number];
-
-export type TicketSource = "customer" | "tester" | "sentinel";
-export type Outcome = "answered" | "data_fixed" | "fix_proposed" | "escalated";
-export type Category = "question" | "user_error" | "data_issue" | "code_bug" | "infra" | "unknown";
-
-export type TicketEventType =
-  | "status"
-  | "subagent_start"
-  | "subagent_end"
-  | "tool_call"
-  | "tool_result"
-  | "message"
-  | "interrupt"
-  | "decision"
-  | "verdict";
-
-/** A Ticket as `GET /tickets` and `GET /tickets/:id` serve it. */
-export type Ticket = {
-  id: string;
-  source: TicketSource;
-  reporterEmail: string | null;
-  /** The ShopLite trace the Reporter was given when the request failed. */
-  traceId: string | null;
-  /** The Langfuse trace of the run investigating this Ticket. */
-  langfuseTraceId: string | null;
-  title: string;
-  body: string;
-  status: TicketStatus;
-  category: Category | null;
-  confidence: number | null;
-  outcome: Outcome | null;
-  reply: string | null;
-  rootCause: string | null;
+/** A Ticket as the portal serves it: the row, with its times as ISO strings over JSON. */
+export type Ticket = Omit<typeof tickets.$inferSelect, "createdAt" | "closedAt"> & {
   createdAt: string;
   closedAt: string | null;
 };
@@ -80,7 +58,7 @@ const outcomeLabels: Record<Outcome, string> = {
   escalated: "Escalated",
 };
 
-const categoryLabels: Record<Category, string> = {
+const categoryLabels: Record<IncidentCategory, string> = {
   question: "Question",
   user_error: "User error",
   data_issue: "Data issue",
@@ -97,7 +75,7 @@ const sourceLabels: Record<TicketSource, string> = {
 
 export const statusLabel = (status: TicketStatus) => statusLabels[status];
 export const outcomeLabel = (outcome: Outcome) => outcomeLabels[outcome];
-export const categoryLabel = (category: Category) => categoryLabels[category];
+export const categoryLabel = (category: IncidentCategory) => categoryLabels[category];
 export const sourceLabel = (source: TicketSource) => sourceLabels[source];
 
 /** Confidence as the whole percent the list column shows. Nothing yet reads as an em dash. */

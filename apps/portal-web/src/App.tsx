@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { fetchConfig, type PortalConfig } from "./lib/api";
-import { linkProps, useRoute } from "./navigation";
+import { linkProps, useRoute } from "./lib/navigation";
 import { NewTicketPage } from "./pages/NewTicketPage";
 import { TicketPage } from "./pages/TicketPage";
 import { TicketsPage } from "./pages/TicketsPage";

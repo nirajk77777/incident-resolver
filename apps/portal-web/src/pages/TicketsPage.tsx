@@ -2,15 +2,16 @@ import { useEffect, useState } from "react";
 import {
   CategoryMark,
   OutcomeMark,
+  Problem,
   SourceMark,
   StatusPill,
   statusSpine,
 } from "../components/chrome";
 import { fetchTickets } from "../lib/api";
+import { linkProps } from "../lib/navigation";
 import type { Route } from "../lib/routes";
 import { confidenceLabel, isRunning, shortId, type Ticket } from "../lib/tickets";
 import { relativeTime } from "../lib/time";
-import { linkProps } from "../navigation";
 
 /**
  * The queue. Every Ticket the portal knows, newest first, with the four things a Reviewer
@@ -31,8 +32,8 @@ export function TicketsPage({ go }: { go: (route: Route) => void }) {
           setTickets(found);
           setError(null);
         }
-      } catch (problem) {
-        if (watching) setError(problem instanceof Error ? problem.message : String(problem));
+      } catch (error) {
+        if (watching) setError(error instanceof Error ? error.message : String(error));
       }
     };
     void read();
@@ -126,7 +127,7 @@ function Empty({ go }: { go: (route: Route) => void }) {
     <div className="border border-dashed border-rule px-6 py-20 text-center">
       <p className="m-0 text-[15px] text-ink">The queue is empty.</p>
       <p className="mt-2 mb-5 text-[13px] text-muted">
-        File a report and watch the Resolver investigate it.
+        File one and watch the Resolver investigate it.
       </p>
       <a
         {...linkProps({ page: "new-ticket" }, go)}
@@ -134,18 +135,6 @@ function Empty({ go }: { go: (route: Route) => void }) {
       >
         File a ticket
       </a>
-    </div>
-  );
-}
-
-export function Problem({ message }: { message: string }) {
-  return (
-    <div className="border border-warn/40 bg-warn/5 px-4 py-3">
-      <p className="eyebrow m-0 text-warn">The portal could not read that</p>
-      <p className="evidence m-0 mt-1 text-ink">{message}</p>
-      <p className="m-0 mt-2 text-[12px] text-muted">
-        Check that portal-api is running on its port, then reload.
-      </p>
     </div>
   );
 }

@@ -13,6 +13,8 @@ export type TimelineCard = {
   detail?: string;
   /** The detail is something the machine wrote — a query, a result — so it is set as one. */
   monoDetail?: boolean;
+  /** The Reply the Ticket ends with, on the card that carries it. */
+  reply?: string;
   /** The raw entry, for the fold. Absent when the heading and detail are the whole entry. */
   payload?: Record<string, unknown>;
   /** A subagent that has started and not yet ended: its card is still open. */
@@ -23,6 +25,16 @@ const text = (value: unknown): string | undefined =>
   typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 
 const name = (payload: Record<string, unknown>) => text(payload.name) ?? "unknown";
+
+/** How much of a tool's arguments, or of a subagent's answer, a card shows before the fold. */
+export const PREVIEW_LIMIT = 140;
+
+/** One line of something longer, cut to what a card can hold. */
+const cut = (value: string) => {
+  const line = value.replace(/\s+/g, " ").trim();
+  if (line.length === 0) return undefined;
+  return line.length <= PREVIEW_LIMIT ? line : `${line.slice(0, PREVIEW_LIMIT)}…`;
+};
 
 /** What one timeline entry becomes on the page. */
 export function cardFor(entry: TimelineEntry): TimelineCard {
@@ -35,9 +47,13 @@ export function cardFor(entry: TimelineEntry): TimelineCard {
       return {
         kind: "subagent",
         heading: name(payload),
-        detail: summary ?? "Finished",
+        // A subagent's whole answer is often several hundred characters of structured output,
+        // which is the longest thing on a run: the card leads with a line of it and folds
+        // the rest away like every other payload.
+        detail: summary === undefined ? "Finished" : cut(summary),
         // A subagent with structured output answers in JSON: it is machine text, and set as it.
         monoDetail: summary !== undefined && /^[{[]/.test(summary),
+        ...(summary === undefined ? {} : { payload }),
       };
     }
     case "tool_call":
@@ -73,19 +89,19 @@ export function cardFor(entry: TimelineEntry): TimelineCard {
         payload,
       };
     case "verdict":
+      // The Verdict is where the Ticket ends, so the Reply it ends with is on the card and
+      // not only in the fold: it is the one thing on a Timeline written for a person to read.
       return {
         kind: "verdict",
         heading: "Verdict",
         detail: text(payload.rootCause),
+        reply: text(payload.reply),
         payload,
       };
     case "status":
       return { kind: "status", heading: text(payload.status) ?? "moved" };
   }
 }
-
-/** How much of a tool's arguments or result a card shows before the fold is the way to read it. */
-export const PREVIEW_LIMIT = 140;
 
 /**
  * The one line a tool card leads with: the query that was run, or what came back. A single
@@ -106,12 +122,6 @@ export function preview(value: unknown): string | undefined {
     return undefined;
   }
 }
-
-const cut = (text: string) => {
-  const line = text.replace(/\s+/g, " ").trim();
-  if (line.length === 0) return undefined;
-  return line.length <= PREVIEW_LIMIT ? line : `${line.slice(0, PREVIEW_LIMIT)}…`;
-};
 
 /**
  * Where an entry sits in its run, as `+m:ss` from the run's first entry. Elapsed time rather
@@ -145,10 +155,14 @@ export function byRun(entries: TimelineEntry[]): Array<{ run: number; entries: T
  * truth: nothing came back.
  */
 export function openSubagents(entries: TimelineEntry[]): Set<number> {
-  const openBy = new Map<string, number>();
+  // Starts of one name are stacked rather than replaced, so a subagent the Resolver ran twice
+  // is closed once per end and the earlier card is not silently closed by the later one.
+  const openBy = new Map<string, number[]>();
   for (const entry of entries) {
-    if (entry.type === "subagent_start") openBy.set(name(entry.payload), entry.id);
-    if (entry.type === "subagent_end") openBy.delete(name(entry.payload));
+    const subagent = name(entry.payload);
+    const open = openBy.get(subagent) ?? [];
+    if (entry.type === "subagent_start") openBy.set(subagent, [...open, entry.id]);
+    if (entry.type === "subagent_end") openBy.set(subagent, open.slice(1));
   }
-  return new Set(openBy.values());
+  return new Set([...openBy.values()].flat());
 }

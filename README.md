@@ -73,8 +73,8 @@ pnpm --filter @incident-resolver/portal-web dev     # portal-web on 5001
 `pnpm dev` starts both, along with every other package that has a dev script.
 
 - **Queue** (`/tickets`): every Ticket newest first, with its status, Source, Category, Outcome and Confidence. It re-reads itself every few seconds, so a Ticket filed elsewhere appears without a reload.
-- **Ticket** (`/tickets/:id`): the live Timeline, as a transcript. One rail down the left with the elapsed offset in the gutter and a marker per entry: subagent start and end, tool call and result, message, interrupt, Decision, Verdict, and the portal's own status moves as rules across the rail. Payloads are collapsed by default and Evidence is set in monospace. The panel beside it fills in with the Outcome, Confidence, root cause, Reply and Evidence as the run reaches them.
-- **File a ticket** (`/tickets/new`): a tester's report — a summary, what went wrong, optional steps to reproduce, and an optional ShopLite trace id. Filing it starts the run and opens its Timeline.
+- **Ticket** (`/tickets/:id`): the live Timeline, as a transcript. One rail down the left with the elapsed offset in the gutter and a marker per entry: subagent start and end, tool call and result, message, interrupt, Decision, Verdict, and the portal's own status moves as rules across the rail. Payloads are collapsed by default and Evidence is set in monospace; the Verdict card carries the Reply. The panel beside it fills in with the Outcome, Confidence, root cause, Reply and Evidence as the run reaches them.
+- **File a ticket** (`/tickets/new`): a summary, what went wrong, optional steps to reproduce, and an optional ShopLite trace id. Filing it starts the run and opens its Timeline.
 - Each Ticket links out to the two traces it carries: the Resolver run in Langfuse, and the ShopLite request in Grafana Explore against Tempo. Both appear only once there is a trace id to point at, and both base URLs come from `GET /config`.
 
 ## MCP servers

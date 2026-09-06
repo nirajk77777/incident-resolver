@@ -5,7 +5,7 @@ import type { ResolverEvent } from "./resolver";
  * Deep Agents reaches every subagent through this one tool, naming the subagent in its
  * arguments, so a `task` call is a subagent start and its return is that subagent's end.
  */
-export const TASK_TOOL = "task";
+const TASK_TOOL = "task";
 
 /** How much of a subagent's answer a timeline card carries. Longer answers are cut. */
 export const SUMMARY_LIMIT = 2_000;
@@ -81,7 +81,7 @@ function subagentNameOf(args: unknown): string | undefined {
  * content of that message; a subagent with structured output has already been serialised
  * into it.
  */
-export function summaryOf(output: unknown): string | undefined {
+function summaryOf(output: unknown): string | undefined {
   const text = textOf(lastMessageOf(output) ?? output);
   if (text === undefined || text.trim().length === 0) return undefined;
   return truncate(text.trim(), SUMMARY_LIMIT);
@@ -92,7 +92,7 @@ export function summaryOf(output: unknown): string | undefined {
  * a message whose text is usually JSON, so it is parsed back into an object the portal can
  * render as a table rather than a wall of escaped quotes.
  */
-export function resultOf(output: unknown): unknown {
+function resultOf(output: unknown): unknown {
   const text = textOf(output);
   if (text === undefined) return jsonSafe(output);
   if (text.length > RESULT_LIMIT) return truncate(text, RESULT_LIMIT);

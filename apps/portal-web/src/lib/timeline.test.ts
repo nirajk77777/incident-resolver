@@ -26,19 +26,31 @@ describe("cardFor", () => {
       detail: "Started",
       pending: true,
     });
-    expect(cardFor(entry("subagent_end", { name: "triage", summary: "A declined card" }))).toEqual({
+    const end = entry("subagent_end", { name: "triage", summary: "A declined card" });
+    expect(cardFor(end)).toEqual({
       kind: "subagent",
       heading: "triage",
       detail: "A declined card",
       monoDetail: false,
+      payload: end.payload,
     });
   });
 
-  it("sets a subagent's structured answer as the machine text it is", () => {
-    const card = cardFor(entry("subagent_end", { name: "triage", summary: '{"category":"x"}' }));
+  it("sets a subagent's structured answer as the machine text it is, and folds it away", () => {
+    const end = entry("subagent_end", { name: "triage", summary: '{"category":"x"}' });
+    const card = cardFor(end);
 
     expect(card.detail).toBe('{"category":"x"}');
     expect(card.monoDetail).toBe(true);
+    expect(card.payload).toBe(end.payload);
+  });
+
+  it("cuts a long subagent answer down to a line, leaving the rest in the fold", () => {
+    const summary = "y".repeat(PREVIEW_LIMIT + 40);
+    const card = cardFor(entry("subagent_end", { name: "log-investigator", summary }));
+
+    expect(card.detail).toHaveLength(PREVIEW_LIMIT + 1);
+    expect(card.payload?.summary).toBe(summary);
   });
 
   it("says a subagent finished when it summarised nothing", () => {
@@ -64,10 +76,17 @@ describe("cardFor", () => {
     );
   });
 
-  it("leads the Verdict card with the root cause", () => {
-    expect(
-      cardFor(entry("verdict", { outcome: "answered", rootCause: "The card was declined" })).detail,
-    ).toBe("The card was declined");
+  it("leads the Verdict card with the root cause, and carries the Reply on it", () => {
+    const card = cardFor(
+      entry("verdict", {
+        outcome: "answered",
+        rootCause: "The card was declined",
+        reply: "Your bank declined the payment. Please try another card.",
+      }),
+    );
+
+    expect(card.detail).toBe("The card was declined");
+    expect(card.reply).toBe("Your bank declined the payment. Please try another card.");
   });
 
   it("names an entry whose payload is missing rather than showing nothing", () => {
@@ -145,5 +164,13 @@ describe("openSubagents", () => {
     expect(
       openSubagents([started, other, ended, entry("subagent_end", { name: "log-investigator" })]),
     ).toEqual(new Set());
+  });
+
+  it("closes one card per end when the same subagent ran twice", () => {
+    const first = entry("subagent_start", { name: "data-investigator" });
+    const second = entry("subagent_start", { name: "data-investigator" });
+    const ended = entry("subagent_end", { name: "data-investigator" });
+
+    expect(openSubagents([first, second, ended])).toEqual(new Set([second.id]));
   });
 });

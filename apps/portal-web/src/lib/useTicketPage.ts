@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { fetchTicket, parseTimelineFrame, timelineUrl } from "./lib/api";
-import { mergeEntries, type Ticket, type TimelineEntry } from "./lib/tickets";
+import { fetchTicket, parseTimelineFrame, timelineUrl } from "./api";
+import { mergeEntries, type Ticket, type TimelineEntry } from "./tickets";
 
 export type TicketPage = {
   ticket: Ticket | null;
@@ -31,8 +31,8 @@ export function useTicketPage(id: string): TicketPage {
       try {
         const found = await fetchTicket(id);
         if (watching) setTicket(found);
-      } catch (problem) {
-        if (watching) setError(problem instanceof Error ? problem.message : String(problem));
+      } catch (error) {
+        if (watching) setError(error instanceof Error ? error.message : String(error));
       }
     };
     void readTicket();

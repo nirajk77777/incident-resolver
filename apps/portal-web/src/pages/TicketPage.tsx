@@ -1,20 +1,27 @@
-import { Field, OutcomeMark, SourceMark, StatusPill, TraceLink } from "../components/chrome";
+import {
+  CategoryMark,
+  Field,
+  OutcomeMark,
+  Problem,
+  SourceMark,
+  StatusPill,
+  TraceLink,
+} from "../components/chrome";
 import { Timeline } from "../components/Timeline";
 import type { PortalConfig } from "../lib/api";
 import { grafanaTraceUrl, langfuseTraceUrl } from "../lib/links";
+import { linkProps } from "../lib/navigation";
 import type { Route } from "../lib/routes";
 import {
-  categoryLabel,
   confidenceLabel,
+  type EvidenceReference,
   isRunning,
   shortId,
   type Ticket,
   type TimelineEntry,
 } from "../lib/tickets";
 import { clockTime } from "../lib/time";
-import { linkProps } from "../navigation";
-import { useTicketPage } from "../useTicketPage";
-import { Problem } from "./TicketsPage";
+import { useTicketPage } from "../lib/useTicketPage";
 
 /**
  * One Ticket, as it is investigated. The Timeline is the page: what the Resolver did, in the
@@ -83,37 +90,40 @@ export function TicketPage({
  * run that investigated it. Each appears only once there is one to point at.
  */
 function Traces({ ticket, config }: { ticket: Ticket; config: PortalConfig | null }) {
-  if (!config) return null;
-  const links = [
-    ticket.langfuseTraceId && (
-      <TraceLink
-        key="langfuse"
-        label="Resolver run in Langfuse"
-        id={ticket.langfuseTraceId}
-        href={langfuseTraceUrl(config.langfuseBaseUrl, ticket.langfuseTraceId)}
-      />
-    ),
-    ticket.traceId && (
-      <TraceLink
-        key="grafana"
-        label="ShopLite trace in Grafana"
-        id={ticket.traceId}
-        href={grafanaTraceUrl(config.grafanaUrl, ticket.traceId)}
-      />
-    ),
-  ].filter(Boolean);
+  const traces = [
+    {
+      key: "langfuse",
+      label: "Resolver run in Langfuse",
+      id: ticket.langfuseTraceId,
+      href:
+        config && ticket.langfuseTraceId
+          ? langfuseTraceUrl(config.langfuseBaseUrl, ticket.langfuseTraceId)
+          : undefined,
+    },
+    {
+      key: "grafana",
+      label: "ShopLite trace in Grafana",
+      id: ticket.traceId,
+      href:
+        config && ticket.traceId ? grafanaTraceUrl(config.grafanaUrl, ticket.traceId) : undefined,
+    },
+  ].filter((trace) => trace.id !== null);
 
-  if (links.length === 0) return null;
-  return <div className="mt-4 flex flex-wrap gap-2">{links}</div>;
+  if (traces.length === 0) return null;
+  return (
+    <div className="mt-4 flex flex-wrap gap-2">
+      {traces.map((trace) => (
+        <TraceLink key={trace.key} label={trace.label} id={trace.id ?? ""} href={trace.href} />
+      ))}
+    </div>
+  );
 }
 
-type Evidence = { fact?: unknown; provenance?: unknown };
-
 /** The Evidence the Verdict rests on, which only the Verdict entry carries. */
-function evidenceOf(entries: TimelineEntry[]): Evidence[] {
+function evidenceOf(entries: TimelineEntry[]): EvidenceReference[] {
   const verdict = [...entries].reverse().find((entry) => entry.type === "verdict");
   const evidence = verdict?.payload.evidence;
-  return Array.isArray(evidence) ? (evidence as Evidence[]) : [];
+  return Array.isArray(evidence) ? (evidence as EvidenceReference[]) : [];
 }
 
 function Resolution({ ticket, entries }: { ticket: Ticket; entries: TimelineEntry[] }) {
@@ -136,9 +146,7 @@ function Resolution({ ticket, entries }: { ticket: Ticket; entries: TimelineEntr
             <OutcomeMark outcome={ticket.outcome} />
           </Field>
           <Field label="Category">
-            <span className="font-mono text-[11px] text-muted">
-              {ticket.category ? categoryLabel(ticket.category) : "—"}
-            </span>
+            <CategoryMark category={ticket.category} />
           </Field>
         </div>
 
@@ -166,11 +174,9 @@ function Resolution({ ticket, entries }: { ticket: Ticket; entries: TimelineEntr
           <Field label="Evidence">
             <ul className="m-0 list-none space-y-3 p-0">
               {evidence.map((item) => (
-                <li key={`${String(item.fact)}·${String(item.provenance)}`}>
-                  <p className="m-0 text-[13px] leading-snug text-ink">{String(item.fact ?? "")}</p>
-                  <p className="evidence m-0 mt-1 break-words text-signal">
-                    {String(item.provenance ?? "")}
-                  </p>
+                <li key={`${item.fact}·${item.provenance}`}>
+                  <p className="m-0 text-[13px] leading-snug text-ink">{item.fact}</p>
+                  <p className="evidence m-0 mt-1 break-words text-signal">{item.provenance}</p>
                 </li>
               ))}
             </ul>

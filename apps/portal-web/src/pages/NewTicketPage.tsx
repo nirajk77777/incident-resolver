@@ -1,42 +1,42 @@
 import { type FormEvent, useState } from "react";
 import { fileTicket } from "../lib/api";
-import { reportBody, reportProblems, type TesterReport } from "../lib/report";
+import { draftBody, draftProblems, type TicketDraft } from "../lib/draft";
+import { linkProps } from "../lib/navigation";
 import type { Route } from "../lib/routes";
-import { linkProps } from "../navigation";
 
-const blank: TesterReport = { summary: "", what: "", steps: "", traceId: "" };
+const blank: TicketDraft = { summary: "", what: "", steps: "", traceId: "" };
 
 /**
- * How a tester files a Ticket. Summary and report are what the Resolver needs; steps and a
- * trace id are what a tester often has and should not have to leave out. Filing it starts
- * the run, so the form hands straight over to the Ticket's Timeline.
+ * How a tester files a Ticket. The summary and what went wrong are what the Resolver needs;
+ * steps and a trace id are what a tester often has and should not have to leave out. Filing
+ * it starts the run, so the form hands straight over to the Ticket's Timeline.
  */
 export function NewTicketPage({ go }: { go: (route: Route) => void }) {
-  const [report, setReport] = useState<TesterReport>(blank);
+  const [draft, setDraft] = useState<TicketDraft>(blank);
   const [problems, setProblems] = useState<string[]>([]);
   const [filing, setFiling] = useState(false);
 
-  const set = (field: keyof TesterReport) => (value: string) =>
-    setReport((held) => ({ ...held, [field]: value }));
+  const set = (field: keyof TicketDraft) => (value: string) =>
+    setDraft((held) => ({ ...held, [field]: value }));
 
   async function file(event: FormEvent) {
     event.preventDefault();
-    const missing = reportProblems(report);
+    const missing = draftProblems(draft);
     setProblems(missing);
     if (missing.length > 0) return;
 
     setFiling(true);
     try {
-      const traceId = report.traceId?.trim();
+      const traceId = draft.traceId?.trim();
       const filed = await fileTicket({
         source: "tester",
-        title: report.summary.trim(),
-        body: reportBody(report),
+        title: draft.summary.trim(),
+        body: draftBody(draft),
         ...(traceId ? { traceId } : {}),
       });
       go({ page: "ticket", id: filed.id });
-    } catch (problem) {
-      setProblems([problem instanceof Error ? problem.message : String(problem)]);
+    } catch (error) {
+      setProblems([error instanceof Error ? error.message : String(error)]);
       setFiling(false);
     }
   }
@@ -66,28 +66,28 @@ export function NewTicketPage({ go }: { go: (route: Route) => void }) {
         <TextField
           label="Summary"
           hint="One line, the way you would title a bug"
-          value={report.summary}
+          value={draft.summary}
           onChange={set("summary")}
         />
         <TextArea
           label="What went wrong"
           hint="What you did, what you expected, what happened instead"
           rows={6}
-          value={report.what}
+          value={draft.what}
           onChange={set("what")}
         />
         <TextArea
           label="Steps to reproduce"
           hint="Optional"
           rows={4}
-          value={report.steps ?? ""}
+          value={draft.steps ?? ""}
           onChange={set("steps")}
         />
         <TextField
           label="ShopLite trace id"
           hint="Optional. The id from the storefront's error message"
           mono
-          value={report.traceId ?? ""}
+          value={draft.traceId ?? ""}
           onChange={set("traceId")}
         />
 

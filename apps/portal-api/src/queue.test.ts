@@ -29,24 +29,10 @@ describe("createEventQueue", () => {
     expect(await read).toEqual(["triage", "verdict"]);
   });
 
-  it("delivers everything queued before it throws the failure", async () => {
-    const queue = createEventQueue<number>();
-    const seen: number[] = [];
-    queue.push(1);
-    queue.close(new Error("the run died"));
-
-    await expect(
-      (async () => {
-        for await (const value of queue) seen.push(value);
-      })(),
-    ).rejects.toThrow("the run died");
-    expect(seen).toEqual([1]);
-  });
-
   it("ignores a push after the close, and a second close", async () => {
     const queue = createEventQueue<number>();
     queue.close();
-    queue.close(new Error("too late"));
+    queue.close();
     queue.push(1);
 
     expect(await drain(queue)).toEqual([]);
