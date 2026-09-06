@@ -1,5 +1,17 @@
 import { sql } from "drizzle-orm";
-import { index, pgSchema, text, timestamp, uuid, vector } from "drizzle-orm/pg-core";
+import {
+  bigserial,
+  check,
+  index,
+  integer,
+  jsonb,
+  pgSchema,
+  real,
+  text,
+  timestamp,
+  uuid,
+  vector,
+} from "drizzle-orm/pg-core";
 
 /**
  * One Postgres instance, three schemas. Tables are added by the issues that own them:
@@ -22,6 +34,50 @@ export const incidentCategories = [
   "unknown",
 ] as const;
 export type IncidentCategory = (typeof incidentCategories)[number];
+
+/** Where a Ticket came from, see CONTEXT.md. Lives here because `tickets.source` is this enum. */
+export const ticketSources = ["customer", "tester", "sentinel"] as const;
+export type TicketSource = (typeof ticketSources)[number];
+
+/** How a Ticket ended, see CONTEXT.md. Lives here because `tickets.outcome` is this enum. */
+export const outcomes = ["answered", "data_fixed", "fix_proposed", "escalated"] as const;
+export type Outcome = (typeof outcomes)[number];
+
+/**
+ * The Ticket lifecycle from PLAN.md section 4. Every Ticket starts `new` and ends `closed`;
+ * `closed` is the only terminal status and always carries exactly one Outcome and one Reply.
+ */
+export const ticketStatuses = [
+  "new",
+  "triaging",
+  "investigating",
+  "awaiting_approval",
+  "acting",
+  "closed",
+] as const;
+export type TicketStatus = (typeof ticketStatuses)[number];
+
+/**
+ * What a timeline entry records. `status` is the portal's own: it writes one whenever the
+ * lifecycle moves, and `decision` records a Reviewer's answer to an interrupt. The rest
+ * come from the Resolver's stream, ending with the `verdict` the Ticket is closed from.
+ */
+export const ticketEventTypes = [
+  "status",
+  "subagent_start",
+  "subagent_end",
+  "tool_call",
+  "tool_result",
+  "message",
+  "interrupt",
+  "decision",
+  "verdict",
+] as const;
+export type TicketEventType = (typeof ticketEventTypes)[number];
+
+/** The Reviewer's verdict on a Proposal, see CONTEXT.md. */
+export const decisions = ["approve", "edit", "reject"] as const;
+export type Decision = (typeof decisions)[number];
 
 export const incidentCategory = knowledge.enum("incident_category", incidentCategories);
 export const incidentResolvedBy = knowledge.enum("incident_resolved_by", ["agent", "human"]);
@@ -66,3 +122,89 @@ export const helpArticles = knowledge.table(
     index("help_articles_embedding_idx").using("hnsw", table.embedding.op("vector_cosine_ops")),
   ],
 );
+
+// The `portal` schema: Tickets, their timeline, and the approval gate. portal-api owns it.
+
+export const ticketSource = portal.enum("ticket_source", ticketSources);
+export const ticketStatus = portal.enum("ticket_status", ticketStatuses);
+export const ticketOutcome = portal.enum("ticket_outcome", outcomes);
+export const ticketEventType = portal.enum("ticket_event_type", ticketEventTypes);
+export const approvalDecision = portal.enum("approval_decision", decisions);
+
+/**
+ * A request for investigation, whatever its Source. The columns after `status` are filled
+ * from the Verdict when the run closes the Ticket; the check keeps `closed` and the Outcome
+ * and Reply that define it inseparable, so no Ticket can end without exactly one of each.
+ * `category` reuses the Category vocabulary from CONTEXT.md, whose Postgres type was first
+ * needed by Incidents.
+ */
+export const tickets = portal.table(
+  "tickets",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    source: ticketSource("source").notNull(),
+    /** The Reporter's email for customer Tickets: scopes database queries and redaction. */
+    reporterEmail: text("reporter_email"),
+    /** The ShopLite trace id from the storefront's error toast, when the Reporter had one. */
+    traceId: text("trace_id"),
+    title: text("title").notNull(),
+    body: text("body").notNull(),
+    status: ticketStatus("status").notNull().default("new"),
+    category: incidentCategory("category"),
+    confidence: real("confidence"),
+    outcome: ticketOutcome("outcome"),
+    reply: text("reply"),
+    rootCause: text("root_cause"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+  },
+  (table) => [
+    check(
+      "tickets_closed_carries_outcome_and_reply",
+      sql`(${table.status} = 'closed') = (${table.outcome} IS NOT NULL AND ${table.reply} IS NOT NULL)`,
+    ),
+    check(
+      "tickets_customer_has_reporter_email",
+      sql`${table.source} <> 'customer' OR ${table.reporterEmail} IS NOT NULL`,
+    ),
+    index("tickets_reporter_email_idx").on(table.reporterEmail),
+  ],
+);
+
+/**
+ * One entry in a Ticket's live timeline, written as the Resolver streams. `id` is the
+ * sequence the SSE stream sends as its event id, so a reconnecting client asks for
+ * everything after the last one it saw. `run` counts re-runs of the same Ticket from 1.
+ */
+export const ticketEvents = portal.table(
+  "ticket_events",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    ticketId: uuid("ticket_id")
+      .notNull()
+      .references(() => tickets.id, { onDelete: "cascade" }),
+    run: integer("run").notNull(),
+    type: ticketEventType("type").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("ticket_events_ticket_id_id_idx").on(table.ticketId, table.id)],
+);
+
+/** A Proposal waiting on a Reviewer, and what they decided. The portal executes it, never the agent. */
+export const approvals = portal.table("approvals", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  ticketId: uuid("ticket_id")
+    .notNull()
+    .references(() => tickets.id, { onDelete: "cascade" }),
+  /** The interrupted tool call the Proposal came from, for example `propose_data_fix`. */
+  action: text("action").notNull(),
+  proposal: jsonb("proposal").$type<Record<string, unknown>>().notNull(),
+  decision: approvalDecision("decision"),
+  /** The Proposal as the Reviewer edited it, when the Decision was `edit`. */
+  editedProposal: jsonb("edited_proposal").$type<Record<string, unknown>>(),
+  /** The rows a data fix touched, before it ran, so it can be rolled back. */
+  snapshot: jsonb("snapshot"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  decidedAt: timestamp("decided_at", { withTimezone: true }),
+});

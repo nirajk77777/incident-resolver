@@ -29,6 +29,13 @@
       "when": 1788688672246,
       "tag": "0003_knowledge",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1788709134853,
+      "tag": "0004_portal",
+      "breakpoints": true
     }
   ]
 }

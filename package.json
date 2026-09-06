@@ -15,6 +15,7 @@
     "db:migrate": "pnpm --filter @incident-resolver/shared db:migrate",
     "seed:incidents": "pnpm --filter @incident-resolver/mcp-incidents seed",
     "resolve": "pnpm --filter @incident-resolver/agents resolve",
+    "portal": "pnpm --filter @incident-resolver/portal-api start",
     "test": "vitest run --project unit",
     "test:integration": "vitest run --project integration",
     "test:all": "vitest run",

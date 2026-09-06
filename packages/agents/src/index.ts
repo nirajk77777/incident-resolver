@@ -3,7 +3,7 @@ export { readTicket } from "./cli-args";
 export { createProcedureGuard, delegationRefusal, resolverSubagents } from "./guard";
 export { createMcpClient, type McpServerName, mcpServerNames } from "./mcp";
 export { createModels, type Models } from "./models";
-export { applyConfidencePolicy, ESCALATION_REPLY, isFastPath } from "./policy";
+export { applyConfidencePolicy, isFastPath } from "./policy";
 export { loadPrompt, type PromptName, promptNames } from "./prompts";
 export {
   createResolver,

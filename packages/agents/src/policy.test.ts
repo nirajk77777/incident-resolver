@@ -1,6 +1,7 @@
 import type { Verdict } from "@incident-resolver/shared";
+import { ESCALATION_REPLY } from "@incident-resolver/shared";
 import { describe, expect, it } from "vitest";
-import { applyConfidencePolicy, ESCALATION_REPLY, isFastPath } from "./policy";
+import { applyConfidencePolicy, isFastPath } from "./policy";
 
 const triage = {
   category: "question" as const,

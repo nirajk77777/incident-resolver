@@ -1,9 +1,7 @@
 import { z } from "zod";
-import { incidentCategories } from "./db/schema";
+import { incidentCategories, outcomes } from "./db/schema";
 
-/** How a Ticket ended, see CONTEXT.md. Exactly one per Ticket. */
-export const outcomes = ["answered", "data_fixed", "fix_proposed", "escalated"] as const;
-export type Outcome = (typeof outcomes)[number];
+export { type Outcome, outcomes } from "./db/schema";
 
 /** A fact gathered during investigation, with where it came from. */
 export const evidenceReferenceSchema = z.object({
@@ -43,3 +41,10 @@ export const verdictSchema = z.object({
     ),
 });
 export type Verdict = z.infer<typeof verdictSchema>;
+
+/**
+ * The holding Reply a Reporter gets when the Ticket is handed to a human: Confidence below
+ * the threshold, or a run that failed before it reached a Verdict.
+ */
+export const ESCALATION_REPLY =
+  "Thanks for your report. We have not been able to confirm the cause yet, so a member of the team is looking into it and will get back to you shortly.";

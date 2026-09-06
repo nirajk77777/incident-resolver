@@ -22,7 +22,7 @@ Copy `.env.example` to `.env` to override any model name, threshold, or URL, and
 ## Layout
 
 ```
-apps/            portal-api, portal-web, sentinel (added by later issues)
+apps/            portal-api (Tickets, timeline, SSE), portal-web and sentinel (added by later issues)
 packages/        shared (config, db client, migrations), mcp-database, mcp-incidents, mcp-observability, agents (Resolver, subagents, prompts, CLI)
 infra/grafana/   dashboards provisioned into the LGTM container's Grafana
 ```
@@ -34,6 +34,25 @@ Tests ending in `.integration.test.ts` need Docker; everything else runs without
 The product the agent investigates lives in its own repository, [nirajk77777/shoplite](https://github.com/nirajk77777/shoplite), per [ADR-0001](docs/adr/0001-shoplite-in-a-separate-repository.md). It has no compose file: it reads `DATABASE_URL` and `OTEL_EXPORTER_OTLP_ENDPOINT` from env and uses the Postgres and LGTM containers started here, owning the `shoplite` schema. Clone it next to this repo, then in it run `pnpm install`, `pnpm db:migrate`, `pnpm db:seed`, and `pnpm dev` for the API on port 4000 and the storefront on port 4001. Its README documents the routes, test cards, a curl checkout, and the storefront's cart tag and error toast.
 
 ShopLite sends traces, logs, and metrics to the LGTM container. The **ShopLite** Grafana dashboard at [localhost:3000/d/shoplite](http://localhost:3000/d/shoplite) shows request rate, error rate by route, p95 latency, the checkout counters, and warn-level logs with clickable trace ids. It is provisioned from `infra/grafana/` through bind mounts in `docker-compose.yml`, so edits to the JSON appear after about ten seconds without restarting.
+
+## Portal API
+
+`apps/portal-api` is the Fastify service that owns the `portal` schema: Tickets from customers, testers and Sentinel, their timelines, and the approval gate's tables. `pnpm portal` starts it on `PORTAL_API_PORT` (5000).
+
+| Route | What it does |
+|-------|--------------|
+| `POST /tickets` | Opens a Ticket from `source`, `reporterEmail`, `traceId`, `title`, `body`, and starts its run. A customer Ticket without a Reporter email is a 400. |
+| `GET /tickets` | The queue, newest first. |
+| `GET /tickets/:id` | One Ticket with its status, Category, Confidence, Outcome, Reply, and root cause. |
+| `GET /tickets/:id/events` | The live timeline as SSE. |
+| `GET /reporters/:email/tickets` | What the storefront's "My tickets" page reads: one Reporter's Tickets and Replies. |
+| `GET /health` | Liveness, and which Resolver is selected. |
+
+A Ticket moves `new` → `triaging` → `investigating` → `awaiting_approval` → `acting` → `closed`, and `closed` always carries exactly one Outcome and one Reply, which a check constraint on the table enforces. The lifecycle is derived in the portal from the Resolver's stream, never inside the agent. A run that fails or times out (`RUN_TIMEOUT_MS`) closes the Ticket as `escalated` with the holding Reply rather than leaving it stuck.
+
+Each entry of the timeline is a `portal.ticket_events` row, written as the run streams and published to every open SSE connection. Frames are unnamed, so `new EventSource(url).onmessage` receives the whole timeline and reads the kind of entry off `type` in the data: `subagent_start`, `subagent_end`, `tool_call`, `tool_result`, `message`, `interrupt`, `decision`, `verdict`, or the portal's own `status`. The frame id is the entry's sequence, so a reloaded page sends `Last-Event-ID` (or `?lastEventId=`) and gets exactly what it missed before the stream goes live. Entries carry the run number, counting re-runs of a Ticket from 1. Tickets run concurrently, one independent run each.
+
+`RESOLVER` chooses what investigates a Ticket. `fake` is a scripted stand-in that emits Triage and Investigator events, a tool call and its result, a message, and a fixed Verdict, with `FAKE_RESOLVER_STEP_DELAY_MS` between them: the whole lifecycle is exercisable over HTTP with no model and no API key. The real Resolver plugs into the same `TicketResolver` seam.
 
 ## MCP servers
 

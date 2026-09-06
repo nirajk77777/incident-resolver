@@ -36,6 +36,14 @@ const configSchema = z
     // A Resolver run that exceeds this closes the Ticket as escalated with reason agent_error.
     RUN_TIMEOUT_MS: count().default(600_000),
 
+    // The portal API: which Resolver it runs Tickets through, and where it listens.
+    // `fake` is the scripted stand-in that needs no model, see apps/portal-api.
+    RESOLVER: z.enum(["fake", "real"]).default("fake"),
+    PORTAL_API_PORT: count().default(5000),
+    PORTAL_API_HOST: z.string().min(1).default("127.0.0.1"),
+    // Pause between the fake Resolver's events, so its timeline arrives one card at a time.
+    FAKE_RESOLVER_STEP_DELAY_MS: z.coerce.number().int().min(0).default(400),
+
     // An approved data fix that would touch more rows than this is refused.
     DATA_FIX_ROW_CAP: count().default(100),
 
@@ -90,6 +98,12 @@ const configSchema = z
       pollIntervalMs: env.SENTINEL_POLL_INTERVAL_MS,
     },
     runTimeoutMs: env.RUN_TIMEOUT_MS,
+    portal: {
+      resolver: env.RESOLVER,
+      port: env.PORTAL_API_PORT,
+      host: env.PORTAL_API_HOST,
+      fakeResolverStepDelayMs: env.FAKE_RESOLVER_STEP_DELAY_MS,
+    },
     dataFixRowCap: env.DATA_FIX_ROW_CAP,
     queryRowCap: env.QUERY_ROW_CAP,
     logLineCap: env.LOG_LINE_CAP,

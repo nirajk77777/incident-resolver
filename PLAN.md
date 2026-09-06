@@ -165,8 +165,8 @@ Seeded Incidents are ShopLite-specific history, not generic e-commerce: dated ac
 
 ## 7. Data model (portal schema)
 
-- `tickets`: id, source (`customer` | `tester` | `sentinel`), reporter_email, trace_id, title, body, status, category, severity, confidence, outcome, reply, root_cause, fingerprint (Sentinel only), created_at, closed_at
-- `ticket_events`: id, ticket_id, type (`tool_call` | `tool_result` | `subagent_start` | `subagent_end` | `message` | `interrupt` | `decision`), payload jsonb, created_at. This feeds the live timeline.
+- `tickets`: id, source (`customer` | `tester` | `sentinel`), reporter_email, trace_id, title, body, status, category, confidence, outcome, reply, root_cause, created_at, closed_at. A check constraint ties `closed` to having exactly one Outcome and one Reply. Severity arrives with Triage and fingerprint with Sentinel, each added by the issue that first writes it.
+- `ticket_events`: id (the sequence the SSE stream sends as its event id), ticket_id, run, type (`tool_call` | `tool_result` | `subagent_start` | `subagent_end` | `message` | `interrupt` | `decision` | `verdict` | `status`), payload jsonb, created_at. This feeds the live timeline. `verdict` carries the Resolver's structured output and `status` is the portal's own entry, written whenever the lifecycle moves.
 - `approvals`: id, ticket_id, action, proposal jsonb, decision, edited_proposal jsonb, snapshot jsonb, decided_at
 - `incidents` (knowledge schema): id, title, symptoms, root_cause, resolution, category, embedding vector(1536), source_ticket_id, resolved_by (`agent` | `human`)
 - `help_articles` (knowledge schema): id, title, body, tags, embedding vector(1536). Seeded with about ten ShopLite articles: clear cache and hard refresh, reset password, change delivery address, cancel an order, where to find invoices, supported cards, discount code rules, and similar.

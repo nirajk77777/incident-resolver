@@ -1,9 +1,5 @@
-import type { Verdict } from "@incident-resolver/shared";
+import { ESCALATION_REPLY, type Verdict } from "@incident-resolver/shared";
 import type { Triage } from "./schemas";
-
-/** The holding Reply a Reporter gets when the Ticket is handed to a human. */
-export const ESCALATION_REPLY =
-  "Thanks for your report. We have not been able to confirm the cause yet, so a member of the team is looking into it and will get back to you shortly.";
 
 /**
  * The fast path rule from PLAN.md: a Question with a Help article at or above the Confidence

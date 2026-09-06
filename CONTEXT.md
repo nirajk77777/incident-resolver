@@ -25,6 +25,16 @@ _Avoid_: resolution, result, status
 The message sent back to the Reporter when a Ticket ends. Customer-facing for customer tickets, internal for tester and Sentinel tickets. Every Ticket gets exactly one.
 _Avoid_: response, resolution message, answer
 
+**Status**:
+Where a Ticket is in its lifecycle: `new`, `triaging`, `investigating`, `awaiting_approval`, `acting`, or `closed`. Distinct from Outcome, which only a closed Ticket has. The portal derives it from the Resolver's stream.
+
+**Run**:
+One pass of the Resolver over a Ticket, numbered from 1. Re-running a Ticket starts a new Run on a fresh thread; every Timeline entry says which Run wrote it.
+
+**Timeline**:
+The ordered record of what a Run did to a Ticket: subagent starts and ends, tool calls and results, messages, interrupts, Decisions, status moves, and the Verdict. Stored as it streams and served live to the portal.
+_Avoid_: log, history, feed, audit trail
+
 **Incident**:
 The distilled record of a closed Ticket written to the knowledge base: symptoms, root cause, and what fixed it. Written for both agent-resolved and human-resolved tickets.
 _Avoid_: ticket, case, past issue
