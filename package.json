@@ -13,6 +13,7 @@
     "infra:up": "docker compose up -d --wait",
     "infra:down": "docker compose down",
     "db:migrate": "pnpm --filter @incident-resolver/shared db:migrate",
+    "seed:incidents": "pnpm --filter @incident-resolver/mcp-incidents seed",
     "test": "vitest run --project unit",
     "test:integration": "vitest run --project integration",
     "test:all": "vitest run",

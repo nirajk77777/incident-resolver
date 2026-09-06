@@ -9,24 +9,25 @@ Requires Node 22 (see `.nvmrc`), pnpm 10, and Docker.
 ```bash
 docker compose up -d --wait   # Postgres 16 + pgvector on 5432, Grafana LGTM on 3000/3100/3200/4317/4318/9090
 pnpm install
-pnpm db:migrate               # creates the shoplite, portal, and knowledge schemas, the vector extension, and the shoplite_reader role
+pnpm db:migrate               # creates the shoplite, portal, and knowledge schemas, the vector extension, the shoplite_reader role, and the knowledge tables
+pnpm seed:incidents           # twenty ShopLite Incidents and ten Help articles, embedded through Cohere. Needs COHERE_API_KEY
 pnpm test                     # unit tests, no Docker needed
 pnpm test:integration         # tests that need the compose stack
 pnpm lint
 pnpm typecheck
 ```
 
-Copy `.env.example` to `.env` to override any model name, threshold, or URL. Every tunable is read in `packages/shared/src/config.ts`.
+Copy `.env.example` to `.env` to override any model name, threshold, or URL, and to set `COHERE_API_KEY`. Every tunable is read in `packages/shared/src/config.ts`.
 
 ## Layout
 
 ```
 apps/            portal-api, portal-web, sentinel (added by later issues)
-packages/        shared (config, db client, migrations), mcp-database, then agents and the other mcp-* servers
+packages/        shared (config, db client, migrations), mcp-database, mcp-incidents, then agents and mcp-observability
 infra/grafana/   dashboards provisioned into the LGTM container's Grafana
 ```
 
-Tests ending in `.integration.test.ts` need Docker; everything else runs without it.
+Tests ending in `.integration.test.ts` need Docker; everything else runs without it. The mcp-incidents MCP client test also needs `COHERE_API_KEY` and is skipped without it.
 
 ## ShopLite
 
@@ -53,3 +54,19 @@ REPORTER_EMAIL=ava.chen@example.com pnpm --filter @incident-resolver/mcp-databas
 ```
 
 Its integration tests drive the tools through the MCP client and need ShopLite migrated and seeded.
+
+### mcp-incidents
+
+`packages/mcp-incidents` gives the agent the knowledge base: `search_similar_incidents`, `get_incident`, `save_incident`, and `search_help_articles`.
+
+- Incidents and Help articles live in the `knowledge` schema (migration 0003) with a `vector(1536)` embedding each. Embeddings come from Cohere `embed-v4.0` through `@langchain/cohere`, which sends `search_document` when indexing and `search_query` when searching; the wrapper cannot set the output dimension, so 1536 is the model default.
+- Both searches share one pipeline: pgvector returns the `KNOWLEDGE_SEARCH_CANDIDATES` (20) nearest rows by cosine similarity, then Cohere `rerank-v3.5` narrows them to `k` (default `KNOWLEDGE_SEARCH_TOP_K`, 3) with a relevance score from 0 to 1. The score is what Triage's Confidence is built from.
+- `save_incident` is called once at Ticket close and writes the distilled record: title, symptoms, root cause, resolution, Category, source Ticket id, who resolved it, and the author. Help articles are seeded and never written by the agent.
+- `pnpm seed:incidents` resets both tables and writes twenty ShopLite Incidents dated March to September 2026 by three authors, three of them about the stale cart total problem so rerank has to choose, one a red herring that shares the words but is a discount rule, plus ten Help articles. The seed data is in `packages/mcp-incidents/src/seed-data.ts`.
+- It needs `COHERE_API_KEY` and refuses to start without it.
+
+```bash
+COHERE_API_KEY=... pnpm --filter @incident-resolver/mcp-incidents start
+```
+
+Its integration tests drive the tools through the MCP client and reseed the knowledge schema first, so they need Docker and the Cohere key; the pgvector store test needs only Docker.

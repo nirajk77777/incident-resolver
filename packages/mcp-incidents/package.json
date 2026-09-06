@@ -1,0 +1,26 @@
+{
+  "name": "@incident-resolver/mcp-incidents",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "seed": "tsx scripts/seed.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@incident-resolver/shared": "workspace:*",
+    "@langchain/cohere": "1.1.0",
+    "@langchain/core": "1.2.9",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "drizzle-orm": "0.45.2",
+    "pg": "8.23.0",
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@types/pg": "8.23.1"
+  }
+}

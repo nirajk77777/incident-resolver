@@ -41,6 +41,11 @@ const configSchema = z
     // A read-only query through mcp-database returns at most this many rows.
     QUERY_ROW_CAP: count().default(200),
 
+    // mcp-incidents pulls this many rows from pgvector by cosine similarity, then
+    // Cohere rerank narrows them to TOP_K with relevance scores.
+    KNOWLEDGE_SEARCH_CANDIDATES: count().default(20),
+    KNOWLEDGE_SEARCH_TOP_K: count().default(3),
+
     // Infrastructure from docker-compose.yml.
     DATABASE_URL: z
       .string()
@@ -78,6 +83,10 @@ const configSchema = z
     runTimeoutMs: env.RUN_TIMEOUT_MS,
     dataFixRowCap: env.DATA_FIX_ROW_CAP,
     queryRowCap: env.QUERY_ROW_CAP,
+    knowledge: {
+      searchCandidates: env.KNOWLEDGE_SEARCH_CANDIDATES,
+      searchTopK: env.KNOWLEDGE_SEARCH_TOP_K,
+    },
     infra: {
       databaseUrl: env.DATABASE_URL,
       shopliteReadonlyDatabaseUrl: env.SHOPLITE_READONLY_DATABASE_URL,
