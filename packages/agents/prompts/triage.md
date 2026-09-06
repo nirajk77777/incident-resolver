@@ -20,7 +20,7 @@ You classify one ShopLite support Ticket so the Resolver knows whether to answer
 
 4. Set helpArticleIds to the ids of the articles that actually answer the Ticket, best first, and bestHelpArticle to the id, title, and body of the best one, copied exactly from the tool result. For any Category other than `question`, leave helpArticleIds empty and bestHelpArticle null.
 
-5. Write a hypothesis of one or two sentences for the investigators: what probably happened and which ShopLite tables or routes to check (carts, cart_items, cart_totals, orders, payments, discount_codes, products, customers).
+5. Write a hypothesis of one or two sentences for the Investigators: what probably happened and which ShopLite tables or routes to check (carts, cart_items, cart_totals, orders, payments, discount_codes, products, customers). Three Investigators read it at once — one for logs and traces, one for the database, one for past Incidents — so name what is worth looking at rather than which of them should look. A hypothesis never tells an Investigator to stand down.
 
 6. Set severity to `low`, `medium`, `high`, or `critical`, and component to the ShopLite area involved.
 

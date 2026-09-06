@@ -64,3 +64,54 @@ export const dataInvestigationSchema = z.object({
     .describe("The Proposal returned by propose_data_fix, unchanged, or null"),
 });
 export type DataInvestigation = z.infer<typeof dataInvestigationSchema>;
+
+/** What the Log Investigator returns: Evidence from ShopLite's logs, traces, and metrics. */
+export const logInvestigationSchema = z.object({
+  summary: z.string().min(1).describe("What the telemetry shows, in at most three sentences"),
+  evidence: z
+    .array(evidenceReferenceSchema)
+    .describe(
+      "Each fact with the tool call that produced it as provenance: the LogQL or PromQL, the trace id, and the timestamp",
+    ),
+  traceIds: z
+    .array(z.string().regex(/^[0-9a-f]{32}$/i, "A trace id is 32 hex characters"))
+    .describe("Every ShopLite trace id seen, newest first, so the Ticket can link to the request"),
+  errorRate: z
+    .number()
+    .min(0)
+    .max(1)
+    .nullable()
+    .describe("The failing route's error ratio when one was measured, or null"),
+});
+export type LogInvestigation = z.infer<typeof logInvestigationSchema>;
+
+/** One past Incident the Historian judged worth acting on. */
+export const incidentMatchSchema = z.object({
+  id: z.uuid().describe("The Incident id, as returned by search_similar_incidents"),
+  title: z.string().min(1),
+  rootCause: z
+    .string()
+    .min(1)
+    .describe("What that Incident says was wrong, copied from the record"),
+  resolution: z
+    .string()
+    .min(1)
+    .describe("What fixed it, copied from the record: the SQL, the code change, or the answer"),
+  relevanceScore: z.number().min(0).max(1).describe("The rerank score the search returned"),
+});
+export type IncidentMatch = z.infer<typeof incidentMatchSchema>;
+
+/** What the Incident Historian returns: the past Incidents that match, after rerank. */
+export const incidentSearchSchema = z.object({
+  summary: z
+    .string()
+    .min(1)
+    .describe("Whether a past Incident matches and what it says, in at most three sentences"),
+  matches: z
+    .array(incidentMatchSchema)
+    .describe("The Incidents worth acting on, best first; empty when nothing genuinely matches"),
+  evidence: z
+    .array(evidenceReferenceSchema)
+    .describe("Each fact with the Incident id and the search that found it as provenance"),
+});
+export type IncidentSearch = z.infer<typeof incidentSearchSchema>;

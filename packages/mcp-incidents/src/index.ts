@@ -1,6 +1,7 @@
 export { type CohereOptions, createCohereProviders } from "./cohere";
 export type { Embedder, Reranker } from "./retrieval";
 export { type SeedResult, seedKnowledge } from "./seed";
+export { seedIncidentIds } from "./seed-data";
 export {
   createIncidentsServer,
   type IncidentsServerOptions,

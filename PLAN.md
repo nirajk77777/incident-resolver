@@ -141,14 +141,13 @@ incident-resolver/                # this repo, pnpm monorepo
     portal-web/
     sentinel/
   packages/
-    agents/                       # Resolver, subagents, prompts, Zod schemas
+    agents/                       # Resolver, subagents, prompts, Zod schemas. Owns scripts/prompts-sync.ts, which pushes its prompts to Langfuse, run as `pnpm prompts:sync`
     mcp-observability/
     mcp-database/
     mcp-incidents/                # also owns scripts/seed.ts: the 20 seeded Incidents, run as `pnpm seed:incidents`
     shared/                       # ticket types, event types, db client, migrations
   docker-compose.yml              # postgres + pgvector, grafana/otel-lgtm
   scripts/demo-reset.ts           # reseed ShopLite data, clear Tickets and approvals, keep Incidents
-  scripts/prompts-sync.ts         # push prompts to Langfuse
   scripts/scorecard.ts            # replay the planted bugs, check each Outcome
   PLAN.md
   CONTEXT.md

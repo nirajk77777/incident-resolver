@@ -1,7 +1,8 @@
 import type { Verdict } from "@incident-resolver/shared";
 import { ESCALATION_REPLY } from "@incident-resolver/shared";
 import { describe, expect, it } from "vitest";
-import { applyConfidencePolicy, isFastPath } from "./policy";
+import { applyConfidencePolicy, investigationWarnings, isFastPath, ranInParallel } from "./policy";
+import type { RunSummary } from "./run-summary";
 
 const triage = {
   category: "question" as const,
@@ -61,5 +62,55 @@ describe("applyConfidencePolicy", () => {
       reply: "We are looking into it.",
     };
     expect(applyConfidencePolicy(escalated, 0.6)).toBe(escalated);
+  });
+});
+
+/** A run described by the turns that delegated, which is all these two rules read. */
+const summary = (delegationTurns: string[][]): RunSummary => ({
+  triage: undefined,
+  subagentsInvoked: delegationTurns.flat(),
+  delegationTurns,
+});
+
+describe("ranInParallel", () => {
+  it("is true only when one turn asked for all three Investigators", () => {
+    expect(
+      ranInParallel(
+        summary([["triage"], ["log-investigator", "data-investigator", "incident-historian"]]),
+      ),
+    ).toBe(true);
+    expect(
+      ranInParallel(summary([["log-investigator"], ["data-investigator"], ["incident-historian"]])),
+    ).toBe(false);
+    expect(ranInParallel(summary([["triage"]]))).toBe(false);
+  });
+});
+
+describe("investigationWarnings", () => {
+  it("says nothing about a fast-path run, which investigates nothing", () => {
+    expect(investigationWarnings(summary([["triage"]]))).toEqual([]);
+  });
+
+  it("says nothing when all three were launched together", () => {
+    expect(
+      investigationWarnings(
+        summary([["triage"], ["log-investigator", "data-investigator", "incident-historian"]]),
+      ),
+    ).toEqual([]);
+  });
+
+  it("names the Investigators a run skipped", () => {
+    expect(investigationWarnings(summary([["triage"], ["data-investigator"]]))).toEqual([
+      "The Resolver investigated without log-investigator and incident-historian: an investigated Ticket runs all three Investigators",
+    ]);
+  });
+
+  it("reports three Investigators launched one turn at a time", () => {
+    const warnings = investigationWarnings(
+      summary([["triage"], ["log-investigator"], ["data-investigator"], ["incident-historian"]]),
+    );
+    expect(warnings).toEqual([
+      "The three Investigators were launched in separate turns rather than one, so their spans do not overlap",
+    ]);
   });
 });

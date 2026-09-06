@@ -37,6 +37,7 @@ describe("loadConfig", () => {
       prometheusUrl: "http://localhost:9090",
       grafanaUrl: "http://localhost:3000",
       langfuseBaseUrl: "https://cloud.langfuse.com",
+      langfusePromptLabel: "production",
     });
   });
 
@@ -101,6 +102,7 @@ describe("loadConfig", () => {
       prometheusUrl: "http://lgtm:9090",
       grafanaUrl: "http://lgtm:3000",
       langfuseBaseUrl: "http://langfuse:3001",
+      langfusePromptLabel: "production",
     });
   });
 

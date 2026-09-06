@@ -6,27 +6,36 @@ export type RunSummary = {
   triage: Triage | undefined;
   /** Every subagent the Resolver delegated to through the task tool, in order, repeats included. */
   subagentsInvoked: string[];
+  /**
+   * The subagents named by each model turn that delegated, in order. A fan-out is one turn
+   * holding several names: that is what makes their spans run, and appear in Langfuse, at once.
+   */
+  delegationTurns: string[][];
 };
 
 /**
  * Reads back what the Resolver did from its message history. Deep Agents' `task` tool carries
  * the subagent name in its arguments and returns the subagent's structured output as the
- * ToolMessage content, so the Triage result and the list of investigators that ran are both
- * recoverable without another model call.
+ * ToolMessage content, so the Triage result, the list of investigators that ran, and whether
+ * they were launched together are all recoverable without another model call.
  */
 export function summarizeRun(messages: BaseMessage[]): RunSummary {
   const subagentByCallId = new Map<string, string>();
   const subagentsInvoked: string[] = [];
+  const delegationTurns: string[][] = [];
   let triage: Triage | undefined;
 
   for (const message of messages) {
     if (AIMessage.isInstance(message)) {
+      const turn: string[] = [];
       for (const call of message.tool_calls ?? []) {
         const subagent = call.args.subagent_type;
         if (call.name !== "task" || typeof subagent !== "string") continue;
+        turn.push(subagent);
         subagentsInvoked.push(subagent);
         if (call.id) subagentByCallId.set(call.id, subagent);
       }
+      if (turn.length > 0) delegationTurns.push(turn);
     } else if (ToolMessage.isInstance(message)) {
       if (triage === undefined && subagentByCallId.get(message.tool_call_id) === "triage") {
         triage = parseTriage(message.content);
@@ -34,7 +43,7 @@ export function summarizeRun(messages: BaseMessage[]): RunSummary {
     }
   }
 
-  return { triage, subagentsInvoked };
+  return { triage, subagentsInvoked, delegationTurns };
 }
 
 function parseTriage(content: BaseMessage["content"]): Triage | undefined {

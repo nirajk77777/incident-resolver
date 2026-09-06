@@ -4,8 +4,15 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createCheckpointer } from "./checkpointer";
 import { createMcpClient } from "./mcp";
 import { createModels } from "./models";
+import { resolvePrompts } from "./prompts";
 import { createResolver } from "./resolver";
-import { dataInvestigatorToolNames, selectTools, triageToolNames } from "./subagents";
+import {
+  dataInvestigatorToolNames,
+  incidentHistorianToolNames,
+  logInvestigatorToolNames,
+  selectTools,
+  triageToolNames,
+} from "./subagents";
 
 // Needs `docker compose up`, this repo's `pnpm db:migrate`, and ShopLite's
 // `pnpm db:migrate && pnpm db:seed`. Run with `pnpm test:integration`.
@@ -49,30 +56,45 @@ describe("Resolver wiring", () => {
     await admin.$client.end();
   });
 
-  it("loads the database and incidents tools through the MCP client", async () => {
+  it("loads the observability, database, and incidents tools through the MCP client", async () => {
     const tools = await mcp.getTools();
     expect(tools.map((tool) => tool.name).sort()).toEqual([
       "describe_schema",
+      "get_error_rate",
       "get_incident",
+      "get_trace",
+      "list_recent_errors",
       "propose_data_fix",
+      "query_metrics",
       "run_readonly_sql",
       "save_incident",
       "search_help_articles",
+      "search_logs",
       "search_similar_incidents",
     ]);
   });
 
-  it("gives Triage only search_help_articles and the Data Investigator the three database tools", async () => {
+  it("gives Triage and each Investigator only its own server's tools", async () => {
     const tools = await mcp.getTools();
-    expect(selectTools(tools, triageToolNames).map((tool) => tool.name)).toEqual([
-      "search_help_articles",
+    const names = (selected: readonly string[]) =>
+      selectTools(tools, selected).map((tool) => tool.name);
+
+    expect(names(triageToolNames)).toEqual(["search_help_articles"]);
+    expect(names(logInvestigatorToolNames)).toEqual([
+      "search_logs",
+      "get_trace",
+      "query_metrics",
+      "get_error_rate",
+      "list_recent_errors",
     ]);
-    expect(selectTools(tools, dataInvestigatorToolNames).map((tool) => tool.name)).toEqual([
+    expect(names(dataInvestigatorToolNames)).toEqual([
       "describe_schema",
       "run_readonly_sql",
       "propose_data_fix",
     ]);
-    expect(() => selectTools(tools, ["search_logs"])).toThrow(/search_logs/);
+    // save_incident is a write at Ticket close, not the Historian's to make.
+    expect(names(incidentHistorianToolNames)).toEqual(["search_similar_incidents", "get_incident"]);
+    expect(() => selectTools(tools, ["run_tests"])).toThrow(/run_tests/);
   });
 
   it("starts the database server scoped to the customer Ticket's reporter", async () => {
@@ -105,6 +127,10 @@ describe("Resolver wiring", () => {
         config,
         models: createModels(config, process.env.OPENAI_API_KEY ?? placeholderKey),
         tools: await mcp.getTools(),
+        prompts: await resolvePrompts({
+          label: config.infra.langfusePromptLabel,
+          variables: { confidenceThreshold: config.confidenceThreshold },
+        }),
         checkpointer,
       });
       expect(resolver).toBeDefined();

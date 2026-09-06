@@ -1,8 +1,10 @@
 import { AIMessage, HumanMessage, ToolMessage } from "@langchain/core/messages";
 import { describe, expect, it } from "vitest";
-import { createProcedureGuard, delegationRefusal } from "./guard";
+import { createProcedureGuard, delegationRefusal, FOCUS_HEADING, withTriageFocus } from "./guard";
+import type { Triage } from "./schemas";
+import { investigators } from "./subagents";
 
-const question = {
+const question: Triage = {
   category: "question",
   severity: "low",
   component: "storefront",
@@ -16,18 +18,37 @@ const question = {
   },
 };
 
+const dataIssue: Triage = {
+  ...question,
+  category: "data_issue",
+  component: "cart",
+  hypothesis: "cart_totals is stale after the removal; check cart_items against cart_totals.",
+  helpArticleIds: [],
+  bestHelpArticle: null,
+};
+
 const task = (subagent: string, id = "call") => ({
   id,
   name: "task",
   args: { description: "do it", subagent_type: subagent },
 });
 
-function afterTriage(triage: object) {
+function afterTriage(triage: Triage) {
   return [
     new HumanMessage("ticket"),
     new AIMessage({ content: "", tool_calls: [task("triage", "t1")] }),
     new ToolMessage({ tool_call_id: "t1", name: "task", content: JSON.stringify(triage) }),
-    new AIMessage({ content: "", tool_calls: [task("data-investigator", "d1")] }),
+  ];
+}
+
+/** The three Investigators as the Resolver is told to launch them: one turn, three calls. */
+function fanOut(triage: Triage) {
+  return [
+    ...afterTriage(triage),
+    new AIMessage({
+      content: "",
+      tool_calls: investigators.map((name) => task(name, `call-${name}`)),
+    }),
   ];
 }
 
@@ -47,49 +68,124 @@ describe("delegationRefusal", () => {
     expect(delegationRefusal(task("triage"), afterTriage(question), 0.6)).toMatch(/already run/);
   });
 
-  it("refuses the Data Investigator before Triage has run", () => {
-    expect(delegationRefusal(task("data-investigator"), [new HumanMessage("ticket")], 0.6)).toMatch(
-      /triage subagent first/,
-    );
+  it("refuses every Investigator before Triage has run", () => {
+    for (const name of investigators) {
+      expect(delegationRefusal(task(name), [new HumanMessage("ticket")], 0.6)).toMatch(
+        /triage subagent first/,
+      );
+    }
   });
 
-  it("refuses the Data Investigator when the fast path applies", () => {
-    expect(delegationRefusal(task("data-investigator"), afterTriage(question), 0.6)).toMatch(
-      /fast path applies/,
-    );
+  it("refuses every Investigator when the fast path applies", () => {
+    for (const name of investigators) {
+      expect(delegationRefusal(task(name), afterTriage(question), 0.6)).toMatch(
+        /fast path applies/,
+      );
+    }
   });
 
-  it("lets the Data Investigator run below the threshold or for another Category", () => {
+  it("lets all three Investigators run below the threshold or for another Category", () => {
     const lowConfidence = { ...question, confidence: 0.5 };
-    expect(
-      delegationRefusal(task("data-investigator"), afterTriage(lowConfidence), 0.6),
-    ).toBeUndefined();
-    const userError = {
-      ...question,
-      category: "user_error",
-      helpArticleIds: [],
-      bestHelpArticle: null,
+    for (const name of investigators) {
+      expect(delegationRefusal(task(name), afterTriage(lowConfidence), 0.6)).toBeUndefined();
+      expect(delegationRefusal(task(name), afterTriage(dataIssue), 0.6)).toBeUndefined();
+    }
+  });
+
+  it("lets a fan-out of all three through: none of them counts the others, or itself, as already run", () => {
+    const messages = fanOut(dataIssue);
+    for (const name of investigators) {
+      expect(delegationRefusal(task(name, `call-${name}`), messages, 0.6)).toBeUndefined();
+    }
+  });
+
+  it("refuses the second of two calls to the same Investigator in one turn", () => {
+    const messages = [
+      ...afterTriage(dataIssue),
+      new AIMessage({
+        content: "",
+        tool_calls: [task("log-investigator", "first"), task("log-investigator", "second")],
+      }),
+    ];
+
+    expect(delegationRefusal(task("log-investigator", "first"), messages, 0.6)).toBeUndefined();
+    expect(delegationRefusal(task("log-investigator", "second"), messages, 0.6)).toMatch(
+      /log-investigator subagent has already run/,
+    );
+  });
+
+  it("refuses an Investigator the Resolver already ran in an earlier turn", () => {
+    const messages = [
+      ...fanOut(dataIssue),
+      ...investigators.map(
+        (name) => new ToolMessage({ tool_call_id: `call-${name}`, name: "task", content: "{}" }),
+      ),
+    ];
+    expect(delegationRefusal(task("log-investigator", "again"), messages, 0.6)).toMatch(
+      /log-investigator subagent has already run/,
+    );
+  });
+});
+
+describe("withTriageFocus", () => {
+  it("hands each Investigator Triage's hypothesis without letting it skip its own source", () => {
+    const focused = withTriageFocus(task("data-investigator"), dataIssue);
+
+    const description = focused.args.description as string;
+    expect(description).toContain("do it");
+    expect(description).toContain(FOCUS_HEADING);
+    expect(description).toContain(dataIssue.hypothesis);
+    expect(description).toContain("data_issue");
+    expect(description).toMatch(/not a reason to stop/i);
+  });
+
+  it("leaves Triage's own brief and unknown subagents alone", () => {
+    expect(withTriageFocus(task("triage"), dataIssue)).toEqual(task("triage"));
+    expect(withTriageFocus(task("general-purpose"), dataIssue)).toEqual(task("general-purpose"));
+  });
+
+  it("leaves the brief alone when there is no Triage to focus with", () => {
+    expect(withTriageFocus(task("log-investigator"), undefined)).toEqual(task("log-investigator"));
+  });
+
+  it("does not append the hypothesis twice", () => {
+    const once = withTriageFocus(task("log-investigator"), dataIssue);
+    expect(withTriageFocus(once, dataIssue)).toEqual(once);
+  });
+
+  it("still appends when the Resolver's own brief happens to talk about the hypothesis", () => {
+    const brief = {
+      ...task("log-investigator"),
+      args: {
+        subagent_type: "log-investigator",
+        description: "Investigate. Triage hypothesis: the badge is stale.",
+      },
     };
-    expect(
-      delegationRefusal(task("data-investigator"), afterTriage(userError), 0.6),
-    ).toBeUndefined();
+
+    const description = withTriageFocus(brief, dataIssue).args.description as string;
+    expect(description).toContain(FOCUS_HEADING);
+    expect(description).toContain(dataIssue.hypothesis);
   });
 });
 
 describe("createProcedureGuard", () => {
   const guard = createProcedureGuard(0.6);
 
+  const wrap = (
+    toolCall: ReturnType<typeof task>,
+    messages: unknown[],
+    handler: (request: unknown) => unknown,
+  ) =>
+    guard.wrapToolCall?.(
+      { toolCall, tool: undefined, state: { messages } } as never,
+      handler as never,
+    );
+
   it("answers a refused delegation with an error ToolMessage instead of running it", async () => {
-    const messages = afterTriage(question);
-    const request = {
-      toolCall: task("data-investigator", "d1"),
-      tool: undefined,
-      state: { messages },
-    };
-    const handler = () => {
+    const reply = (await wrap(task("data-investigator", "d1"), afterTriage(question), () => {
       throw new Error("must not run");
-    };
-    const reply = (await guard.wrapToolCall?.(request as never, handler as never)) as ToolMessage;
+    })) as ToolMessage;
+
     expect(reply.tool_call_id).toBe("d1");
     expect(reply.status).toBe("error");
     expect(reply.content).toMatch(/Refused: the fast path applies/);
@@ -100,9 +196,18 @@ describe("createProcedureGuard", () => {
       new HumanMessage("ticket"),
       new AIMessage({ content: "", tool_calls: [task("triage", "t1")] }),
     ];
-    const request = { toolCall: task("triage", "t1"), tool: undefined, state: { messages } };
     const ran = new ToolMessage({ tool_call_id: "t1", name: "task", content: "{}" });
-    const reply = await guard.wrapToolCall?.(request as never, (() => ran) as never);
-    expect(reply).toBe(ran);
+
+    expect(await wrap(task("triage", "t1"), messages, () => ran)).toBe(ran);
+  });
+
+  it("focuses an allowed Investigator with the hypothesis before the handler sees it", async () => {
+    let seen: string | undefined;
+    await wrap(task("incident-historian", "h1"), afterTriage(dataIssue), (request) => {
+      seen = (request as { toolCall: { args: { description: string } } }).toolCall.args.description;
+      return new ToolMessage({ tool_call_id: "h1", name: "task", content: "{}" });
+    });
+
+    expect(seen).toContain(dataIssue.hypothesis);
   });
 });

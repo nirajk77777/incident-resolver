@@ -8,17 +8,20 @@
   },
   "scripts": {
     "resolve": "node --env-file-if-exists=../../.env --import tsx src/cli.ts",
+    "prompts:sync": "node --env-file-if-exists=../../.env --import tsx scripts/prompts-sync.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@incident-resolver/mcp-database": "workspace:*",
     "@incident-resolver/mcp-incidents": "workspace:*",
+    "@incident-resolver/mcp-observability": "workspace:*",
     "@incident-resolver/shared": "workspace:*",
     "@langchain/core": "1.2.9",
     "@langchain/langgraph": "1.4.14",
     "@langchain/langgraph-checkpoint-postgres": "1.0.5",
     "@langchain/mcp-adapters": "1.1.4",
     "@langchain/openai": "1.5.11",
+    "@langfuse/client": "5.11.0",
     "@langfuse/langchain": "5.11.0",
     "@langfuse/otel": "5.11.0",
     "@langfuse/tracing": "5.11.0",

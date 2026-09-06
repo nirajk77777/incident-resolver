@@ -44,13 +44,48 @@ describe("summarizeRun", () => {
     expect(summarizeRun(messages)).toEqual({
       triage,
       subagentsInvoked: ["triage", "data-investigator"],
+      delegationTurns: [["triage"], ["data-investigator"]],
     });
+  });
+
+  it("groups the Investigators the Resolver launched in one turn, which is what makes their spans overlap", () => {
+    const fanOut = new AIMessage({
+      content: "",
+      tool_calls: [
+        { id: "l", name: "task", args: { description: "logs", subagent_type: "log-investigator" } },
+        { id: "d", name: "task", args: { description: "db", subagent_type: "data-investigator" } },
+        {
+          id: "h",
+          name: "task",
+          args: { description: "history", subagent_type: "incident-historian" },
+        },
+      ],
+    });
+
+    const summary = summarizeRun([new HumanMessage("ticket"), fanOut]);
+
+    expect(summary.delegationTurns).toEqual([
+      ["log-investigator", "data-investigator", "incident-historian"],
+    ]);
+  });
+
+  it("ignores tool calls that are not delegations when grouping a turn", () => {
+    const mixed = new AIMessage({
+      content: "",
+      tool_calls: [
+        { id: "w", name: "write_todos", args: { todos: [] } },
+        { id: "t", name: "task", args: { description: "t", subagent_type: "triage" } },
+      ],
+    });
+
+    expect(summarizeRun([mixed]).delegationTurns).toEqual([["triage"]]);
   });
 
   it("reports no Triage and no subagents when the Resolver never delegated", () => {
     expect(summarizeRun([new HumanMessage("ticket"), new AIMessage("done")])).toEqual({
       triage: undefined,
       subagentsInvoked: [],
+      delegationTurns: [],
     });
   });
 
@@ -64,6 +99,10 @@ describe("summarizeRun", () => {
       }),
       new ToolMessage({ tool_call_id: "c", name: "task", content: "Task completed" }),
     ];
-    expect(summarizeRun(messages)).toEqual({ triage: undefined, subagentsInvoked: ["triage"] });
+    expect(summarizeRun(messages)).toEqual({
+      triage: undefined,
+      subagentsInvoked: ["triage"],
+      delegationTurns: [["triage"]],
+    });
   });
 });

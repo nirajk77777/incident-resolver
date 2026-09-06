@@ -47,6 +47,9 @@ importers:
       '@incident-resolver/mcp-incidents':
         specifier: workspace:*
         version: link:../mcp-incidents
+      '@incident-resolver/mcp-observability':
+        specifier: workspace:*
+        version: link:../mcp-observability
       '@incident-resolver/shared':
         specifier: workspace:*
         version: link:../shared
@@ -65,6 +68,9 @@ importers:
       '@langchain/openai':
         specifier: 1.5.11
         version: 1.5.11(@aws-sdk/credential-provider-node@3.972.82)(@langchain/core@1.2.9(@opentelemetry/api@1.9.1)(@opentelemetry/exporter-trace-otlp-proto@0.222.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.11.0(@opentelemetry/api@1.9.1))(openai@7.10.0(@aws-sdk/credential-provider-node@3.972.82)(@smithy/signature-v4@5.7.3)(zod@4.5.4)))(@smithy/signature-v4@5.7.3)
+      '@langfuse/client':
+        specifier: 5.11.0
+        version: 5.11.0(@opentelemetry/api@1.9.1)
       '@langfuse/langchain':
         specifier: 5.11.0
         version: 5.11.0(@langchain/core@1.2.9(@opentelemetry/api@1.9.1)(@opentelemetry/exporter-trace-otlp-proto@0.222.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.11.0(@opentelemetry/api@1.9.1))(openai@7.10.0(@aws-sdk/credential-provider-node@3.972.82)(@smithy/signature-v4@5.7.3)(zod@4.5.4)))(@opentelemetry/api@1.9.1)
@@ -866,6 +872,11 @@ packages:
 
   '@langchain/protocol@0.0.19':
     resolution: {integrity: sha512-9hKcRrH7cBX6gfutdfXPoft1OCchHe4FEpALoDJMl5Qu+n/YG5ynZmyu8+8cxORlPwHBoKTxggvXz+76M1yX1Q==}
+
+  '@langfuse/client@5.11.0':
+    resolution: {integrity: sha512-3Bf8xI1y8Dc71iLbfBV/CDM6Z5EgRpMPR+m+SQoChVXlzXQATs3MkBR8lLQlU/ag+9Pa1vf1OYTfPX4gf0iJQw==}
+    peerDependencies:
+      '@opentelemetry/api': ^1.9.0
 
   '@langfuse/core@5.11.0':
     resolution: {integrity: sha512-Y5nBcrd8k0bEazb+lcOaEm6ICxxJJLGDkTax7dY4NyiYoO1LlTIFhkfwSOcneQRjpl7EvgL4Dy+9fzDXBDuVaA==}
@@ -3192,6 +3203,13 @@ snapshots:
       - ws
 
   '@langchain/protocol@0.0.19': {}
+
+  '@langfuse/client@5.11.0(@opentelemetry/api@1.9.1)':
+    dependencies:
+      '@langfuse/core': 5.11.0(@opentelemetry/api@1.9.1)
+      '@langfuse/tracing': 5.11.0(@opentelemetry/api@1.9.1)
+      '@opentelemetry/api': 1.9.1
+      mustache: 4.2.0
 
   '@langfuse/core@5.11.0(@opentelemetry/api@1.9.1)':
     dependencies:

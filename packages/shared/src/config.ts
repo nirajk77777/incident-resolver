@@ -78,6 +78,8 @@ const configSchema = z
     GRAFANA_URL: z.url().default("http://localhost:3000"),
     // Langfuse Cloud by default; the keys are secrets and stay in the environment.
     LANGFUSE_BASE_URL: z.url().default("https://cloud.langfuse.com"),
+    // The Langfuse prompt management label `pnpm prompts:sync` pushes to and the agents fetch by.
+    LANGFUSE_PROMPT_LABEL: z.string().min(1).default("production"),
   })
   .transform((env) => ({
     models: {
@@ -121,6 +123,7 @@ const configSchema = z
       prometheusUrl: env.PROMETHEUS_URL,
       grafanaUrl: env.GRAFANA_URL,
       langfuseBaseUrl: env.LANGFUSE_BASE_URL,
+      langfusePromptLabel: env.LANGFUSE_PROMPT_LABEL,
     },
   }));
 

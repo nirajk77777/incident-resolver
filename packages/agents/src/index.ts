@@ -1,10 +1,36 @@
 export { createCheckpointer } from "./checkpointer";
 export { readTicket } from "./cli-args";
-export { createProcedureGuard, delegationRefusal, resolverSubagents } from "./guard";
+export {
+  createProcedureGuard,
+  delegationRefusal,
+  resolverSubagents,
+  withTriageFocus,
+} from "./guard";
+export {
+  createPromptClient,
+  type LangfuseCredentials,
+  langfusePromptFetcher,
+  syncPrompt,
+} from "./langfuse-prompts";
 export { createMcpClient, type McpServerName, mcpServerNames } from "./mcp";
 export { createModels, type Models } from "./models";
-export { applyConfidencePolicy, isFastPath } from "./policy";
-export { loadPrompt, type PromptName, promptNames } from "./prompts";
+export {
+  applyConfidencePolicy,
+  investigationWarnings,
+  isFastPath,
+  ranInParallel,
+} from "./policy";
+export {
+  loadPrompt,
+  type PromptFetcher,
+  type PromptName,
+  type Prompts,
+  promptNames,
+  promptVersions,
+  type ResolvedPrompt,
+  readPromptFile,
+  resolvePrompts,
+} from "./prompts";
 export {
   createResolver,
   defaultThreadId,
@@ -21,9 +47,28 @@ export {
   type DataInvestigation,
   dataInvestigationSchema,
   helpArticleSchema,
+  type IncidentMatch,
+  type IncidentSearch,
+  incidentMatchSchema,
+  incidentSearchSchema,
+  type LogInvestigation,
+  logInvestigationSchema,
   severities,
   type Triage,
   triageSchema,
 } from "./schemas";
-export { DATA_INVESTIGATOR, TRIAGE } from "./subagents";
-export { startTracing, type Tracing, type TracingOptions, traceRun, traceTags } from "./tracing";
+export {
+  DATA_INVESTIGATOR,
+  INCIDENT_HISTORIAN,
+  investigators,
+  LOG_INVESTIGATOR,
+  TRIAGE,
+} from "./subagents";
+export { createToolErrorGuard, toolErrorReply } from "./tool-errors";
+export {
+  startTracing,
+  type TraceRunOptions,
+  type Tracing,
+  traceRun,
+  traceTags,
+} from "./tracing";

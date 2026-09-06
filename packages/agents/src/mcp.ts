@@ -7,10 +7,11 @@ import { MultiServerMCPClient } from "@langchain/mcp-adapters";
  * The MCP servers the Resolver's subagents use, spawned as stdio child processes the way
  * portal-api will spawn them: this repo's packages, run with tsx from their own directory.
  */
-export const mcpServerNames = ["database", "incidents"] as const;
+export const mcpServerNames = ["observability", "database", "incidents"] as const;
 export type McpServerName = (typeof mcpServerNames)[number];
 
 const packageNames: Record<McpServerName, string> = {
+  observability: "@incident-resolver/mcp-observability",
   database: "@incident-resolver/mcp-database",
   incidents: "@incident-resolver/mcp-incidents",
 };
@@ -34,10 +35,11 @@ export function mcpPackageDir(name: McpServerName): string {
 type Env = Record<string, string | undefined>;
 
 /**
- * One stdio connection per server. The database server is scoped to the Reporter for customer
- * Tickets through REPORTER_EMAIL, and runs unscoped for tester and Sentinel Tickets even if the
- * shell had a reporter set, so scoping is always the Ticket's decision. The incidents server
- * never needs the reporter.
+ * One stdio connection per server. The database and observability servers are scoped to the
+ * Reporter for customer Tickets through REPORTER_EMAIL — the first to reject unscoped queries,
+ * the second to leave the Reporter's own email unmasked in log lines — and run unscoped for
+ * tester and Sentinel Tickets even if the shell had a reporter set, so scoping is always the
+ * Ticket's decision. The incidents server never needs the reporter.
  */
 export function mcpConnections(
   ticket: Ticket,
@@ -49,6 +51,7 @@ export function mcpConnections(
       ? { ...base, REPORTER_EMAIL: ticket.reporterEmail }
       : base;
   return {
+    observability: connection("observability", scoped),
     database: connection("database", scoped),
     incidents: connection("incidents", base),
   };

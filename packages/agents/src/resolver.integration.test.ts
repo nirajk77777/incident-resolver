@@ -1,5 +1,7 @@
 import { fileURLToPath } from "node:url";
+import { seedIncidentIds } from "@incident-resolver/mcp-incidents";
 import { createDb, type Db, loadConfig, runMigrations } from "@incident-resolver/shared";
+import type { StructuredTool } from "@langchain/core/tools";
 import type { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 import type { MultiServerMCPClient } from "@langchain/mcp-adapters";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -7,20 +9,66 @@ import { createCheckpointer } from "./checkpointer";
 import { readTicket } from "./cli-args";
 import { createMcpClient } from "./mcp";
 import { createModels } from "./models";
+import { type Prompts, resolvePrompts } from "./prompts";
 import { createResolver, defaultThreadId, type Resolver, resolveTicket } from "./resolver";
-import { DATA_INVESTIGATOR, TRIAGE } from "./subagents";
+import {
+  DATA_INVESTIGATOR,
+  INCIDENT_HISTORIAN,
+  LOG_INVESTIGATOR,
+  selectTools,
+  TRIAGE,
+} from "./subagents";
 import { startTracing, type Tracing, traceRun } from "./tracing";
 
-// The first end-to-end agent slice, driven the way the CLI drives it. Needs `docker compose up`,
-// this repo's `pnpm db:migrate` and `pnpm seed:incidents`, ShopLite migrated and seeded, and
-// OPENAI_API_KEY plus COHERE_API_KEY. Without both keys the suite is skipped. With the Langfuse
-// keys set too, each run lands in Langfuse under a session named after the Ticket id.
+// The end-to-end agent slice, driven the way the CLI drives it. Needs `docker compose up`,
+// this repo's `pnpm db:migrate` and `pnpm seed:incidents`, ShopLite migrated, seeded, and
+// running (`pnpm dev`, API on SHOPLITE_API_URL), and OPENAI_API_KEY plus COHERE_API_KEY.
+// Without both keys the suite is skipped. With the Langfuse keys set too, each run lands in
+// Langfuse under a session named after the Ticket id, and the prompts come from the label.
+//
+// The Tickets are made true before they are resolved: a declined checkout and a stale
+// cart_totals row are generated against the running ShopLite, so the Investigators have
+// something real to find in Loki, Tempo, and the database.
 
 const config = loadConfig();
 const openAiApiKey = process.env.OPENAI_API_KEY;
 const hasApiKeys = Boolean(openAiApiKey && process.env.COHERE_API_KEY);
+const shopliteApi = process.env.SHOPLITE_API_URL ?? "http://localhost:4000";
 const fixture = (name: string) =>
   fileURLToPath(new URL(`../tickets/${name}.json`, import.meta.url));
+
+const ava = { id: "00000000-0000-4000-8000-000000000001", email: "ava.chen@example.com" };
+const mug = "00000000-0000-4000-9000-000000000001";
+const tee = "00000000-0000-4000-9000-000000000002";
+const declinedCard = { number: "4000000000000002", expMonth: 12, expYear: 2030 };
+const traceIdPattern = /[0-9a-f]{32}/;
+
+/** Every trace id and every provenance string a Verdict rests on, as one searchable blob. */
+const evidenceText = (evidence: Array<{ fact: string; provenance: string }>) =>
+  evidence.map((item) => `${item.fact} ${item.provenance}`).join("\n");
+
+async function post(path: string, body: unknown): Promise<Response> {
+  return fetch(`${shopliteApi}${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+/** Retries until `attempt` returns a value, since ingestion into LGTM is asynchronous. */
+async function pollUntil<T>(
+  what: string,
+  attempt: () => Promise<T | undefined>,
+  timeoutMs = 60_000,
+): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const result = await attempt().catch(() => undefined);
+    if (result !== undefined) return result;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  throw new Error(`Timed out waiting for ${what}`);
+}
 
 describe.skipIf(!hasApiKeys)(
   "Resolver end to end",
@@ -29,6 +77,8 @@ describe.skipIf(!hasApiKeys)(
     let admin: Db;
     let tracing: Tracing;
     let checkpointer: PostgresSaver;
+    let prompts: Prompts;
+    let declinedTraceId: string;
 
     beforeAll(async () => {
       admin = createDb(config.infra.databaseUrl);
@@ -39,19 +89,28 @@ describe.skipIf(!hasApiKeys)(
       if (articles.rows[0]?.n === 0) {
         throw new Error("No Help articles: run `pnpm seed:incidents` first");
       }
-      const declined = await admin.$client.query(
-        "SELECT 1 FROM shoplite.payments WHERE status = 'declined' AND customer_id = $1 LIMIT 1",
-        ["00000000-0000-4000-8000-000000000001"],
-      );
-      if (declined.rowCount === 0) {
-        throw new Error(
-          "Ava Chen has no declined payment: run a checkout with a card ending 0002 against ShopLite first",
-        );
+      const health = await fetch(`${shopliteApi}/health`).catch(() => undefined);
+      if (!health?.ok) {
+        throw new Error(`ShopLite is not running on ${shopliteApi}: run \`pnpm dev\` in shoplite`);
       }
+
+      // Demo moment 1: a checkout the mock gateway declines, so the payments row and the
+      // decline log line the Investigators cite both exist and are minutes old. The stale
+      // cart_totals row demo moment 2 needs is made in its own test, not here.
+      await post(`/customers/${ava.id}/cart/items`, { productId: mug });
+      const checkout = await post(`/customers/${ava.id}/checkout`, { card: declinedCard });
+      expect(checkout.status).toBe(402);
+      declinedTraceId = checkout.headers.get("x-trace-id") as string;
+      expect(declinedTraceId).toMatch(/^[0-9a-f]{32}$/);
+
       tracing = startTracing({
         publicKey: process.env.LANGFUSE_PUBLIC_KEY,
         secretKey: process.env.LANGFUSE_SECRET_KEY,
         baseUrl: config.infra.langfuseBaseUrl,
+      });
+      prompts = await resolvePrompts({
+        label: config.infra.langfusePromptLabel,
+        variables: { confidenceThreshold: config.confidenceThreshold },
       });
       checkpointer = await createCheckpointer(config);
     });
@@ -69,11 +128,48 @@ describe.skipIf(!hasApiKeys)(
       clients.push(mcp);
       const tools = await mcp.getTools();
       const models = createModels(config, openAiApiKey as string);
-      const resolver: Resolver = createResolver({ config, models, tools, checkpointer });
+      const resolver: Resolver = createResolver({ config, models, tools, prompts, checkpointer });
       const threadId = defaultThreadId(ticket);
-      return traceRun(ticket, config.models, (callbacks) =>
-        resolveTicket({ resolver, ticket, threadId, config, callbacks }),
+      return traceRun({ ticket, models: config.models, prompts }, (callbacks) =>
+        resolveTicket({ resolver, ticket, threadId, config, prompts, callbacks }),
       );
+    }
+
+    /**
+     * Demo moment 2's planted bug, made true. Removing a line leaves cart_totals holding the
+     * old count, because removeItem never refreshes the denormalised row. Done immediately
+     * before the run that needs it: anything else touching the cart refreshes the row, so a
+     * cart staled minutes earlier may well be back in sync by the time the Resolver looks.
+     */
+    async function staleTheCartTotals(): Promise<void> {
+      await post(`/customers/${ava.id}/cart/items`, { productId: mug });
+      await post(`/customers/${ava.id}/cart/items`, { productId: tee });
+      const removal = await fetch(`${shopliteApi}/customers/${ava.id}/cart/items/${tee}`, {
+        method: "DELETE",
+      });
+      expect(removal.ok).toBe(true);
+
+      const { rows } = await admin.$client.query<{ item_count: number; lines: number }>(
+        `SELECT t.item_count, coalesce(sum(i.quantity), 0)::int AS lines
+           FROM shoplite.carts c
+           JOIN shoplite.cart_totals t ON t.cart_id = c.id
+           LEFT JOIN shoplite.cart_items i ON i.cart_id = c.id
+          WHERE c.customer_id = $1 AND c.status = 'open'
+          GROUP BY t.item_count`,
+        [ava.id],
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.item_count).not.toBe(rows[0]?.lines);
+    }
+
+    /** Loki indexes asynchronously; without this the Log Investigator can outrun the line it needs. */
+    async function waitForDeclineLine(tools: StructuredTool[]): Promise<void> {
+      const [searchLogs] = selectTools(tools, ["search_logs"]);
+      if (!searchLogs) throw new Error("search_logs not loaded");
+      await pollUntil("the decline line in Loki", async () => {
+        const found = String(await searchLogs.invoke({ traceId: declinedTraceId }));
+        return found.includes("declined") ? true : undefined;
+      });
     }
 
     it("answers the images-not-loading Ticket from the clear cache article without an Investigator", async () => {
@@ -83,22 +179,67 @@ describe.skipIf(!hasApiKeys)(
       expect(report.verdict.category).toBe("question");
       expect(report.subagentsInvoked).toEqual([TRIAGE]);
       expect(report.fastPath).toBe(true);
+      expect(report.parallelInvestigation).toBe(false);
       expect(report.triage?.helpArticleIds).toContain("40000000-0000-4000-8000-000000000001");
       expect(report.verdict.reply).toMatch(/refresh|cache/i);
       expect(report.warnings).toEqual([]);
     });
 
-    it("answers the declined-card Ticket from the payments table with a plain-language Reply", async () => {
+    it("cites the trace id and the decline log line on the declined-card Ticket", async () => {
+      const ticket = await readTicket(fixture("declined-card"));
+      const mcp = createMcpClient(ticket);
+      clients.push(mcp);
+      await waitForDeclineLine(await mcp.getTools());
+
       const report = await run("declined-card");
 
       expect(report.verdict.outcome).toBe("answered");
       expect(report.verdict.category).toBe("user_error");
-      expect(report.subagentsInvoked).toContain(DATA_INVESTIGATOR);
+      expect(report.subagentsInvoked).toEqual(
+        expect.arrayContaining([LOG_INVESTIGATOR, DATA_INVESTIGATOR, INCIDENT_HISTORIAN]),
+      );
+      expect(report.parallelInvestigation).toBe(true);
       expect(report.fastPath).toBe(false);
+
+      const evidence = evidenceText(report.verdict.evidence);
+      expect(evidence).toMatch(traceIdPattern);
+      expect(evidence).toMatch(/declin/i);
+      expect(evidence).toMatch(/log|loki|trace/i);
+      expect(report.verdict.evidence.some((item) => /payments/i.test(item.provenance))).toBe(true);
+
+      // The Reply goes to a customer: no SQL, no table names, no trace ids.
       expect(report.verdict.reply).toMatch(/declin/i);
       expect(report.verdict.reply).not.toMatch(/shoplite\.payments|SELECT/);
-      expect(report.verdict.evidence.some((item) => /payments/i.test(item.provenance))).toBe(true);
+      expect(report.verdict.reply).not.toMatch(traceIdPattern);
+    });
+
+    it("cites the seeded Incident and proposes its documented data fix on the stale cart total Ticket", async () => {
+      await staleTheCartTotals();
+
+      const report = await run("stale-cart-total");
+
+      expect(report.verdict.category).toBe("data_issue");
+      expect(report.subagentsInvoked).toEqual(
+        expect.arrayContaining([LOG_INVESTIGATOR, DATA_INVESTIGATOR, INCIDENT_HISTORIAN]),
+      );
+      expect(report.parallelInvestigation).toBe(true);
+
+      // The knowledge loop: one of the three cart_totals Incidents, not the discount red herring.
+      const evidence = evidenceText(report.verdict.evidence);
+      const cartTotalsIncidents = [
+        seedIncidentIds.staleCartTotal,
+        ...seedIncidentIds.staleCartTotalDuplicates,
+      ];
+      expect(cartTotalsIncidents.some((id) => evidence.includes(id))).toBe(true);
+      expect(evidence).not.toContain(seedIncidentIds.redHerring);
+
+      // The documented fix, carried into the Verdict rather than invented. mcp-database sets
+      // the search path, so the Proposal's UPDATE may or may not qualify the schema.
+      expect(evidence).toMatch(/UPDATE\s+(shoplite\.)?cart_totals/i);
+
+      // This build cannot execute a data fix, so it goes to a human with the Proposal attached.
+      expect(report.verdict.outcome).toBe("escalated");
     });
   },
-  300_000,
+  600_000,
 );

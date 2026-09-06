@@ -8,6 +8,8 @@ import {
   startActiveObservation,
 } from "@langfuse/tracing";
 import { NodeSDK } from "@opentelemetry/sdk-node";
+import type { LangfuseCredentials } from "./langfuse-prompts";
+import { type Prompts, promptVersions } from "./prompts";
 import type { RunReport } from "./resolver";
 
 /**
@@ -21,15 +23,8 @@ export type Tracing = {
   shutdown(): Promise<void>;
 };
 
-export type TracingOptions = {
-  /** Secrets, read from the environment by the caller. Both are needed to trace. */
-  publicKey?: string | undefined;
-  secretKey?: string | undefined;
-  /** From config; Langfuse Cloud by default. */
-  baseUrl?: string | undefined;
-};
-
-export function startTracing({ publicKey, secretKey, baseUrl }: TracingOptions): Tracing {
+/** The same keys prompt management uses: read from the environment, both needed to trace. */
+export function startTracing({ publicKey, secretKey, baseUrl }: LangfuseCredentials): Tracing {
   if (!publicKey || !secretKey) {
     return { enabled: false, shutdown: async () => {} };
   }
@@ -54,20 +49,41 @@ export function traceTags(
   return [`source:${ticket.source}`, ...modelTags, ...(category ? [`category:${category}`] : [])];
 }
 
+export type TraceRunOptions = {
+  ticket: Ticket;
+  models: ModelNames;
+  /** Recorded on the trace so a run can be read against the prompt version that produced it. */
+  prompts: Prompts;
+};
+
 /**
  * Runs one Resolver invocation as a Langfuse trace: session id equals the Ticket id, the
  * LangChain callback handler nests every subagent, tool, and model span under the run, and
- * the root span carries the tags. Source and models are known up front; the Category is
- * written onto the root span once the Verdict is in, since trace tags are read from any span.
+ * the root span carries the tags. Source, models, and the prompt versions are known up front;
+ * the Category is written onto the root span once the Verdict is in, since trace tags are read
+ * from any span.
  */
 export function traceRun(
-  ticket: Ticket,
-  models: ModelNames,
+  { ticket, models, prompts }: TraceRunOptions,
   run: (callbacks: Callbacks) => Promise<RunReport>,
 ): Promise<RunReport> {
   const sessionId = ticket.id;
   const tags = traceTags(ticket, models);
-  const metadata = { ticketId: ticket.id, source: ticket.source };
+  // Flat: Langfuse trace metadata is string-valued, so each prompt gets its own key.
+  //
+  // Metadata rather than the SDK's own prompt-to-generation link: that link is registered by
+  // putting a prompt object in the invoke's `langfusePrompt` metadata, and LangChain metadata
+  // is inherited by every child run, so the Resolver's prompt would be stamped on Triage's and
+  // each Investigator's generations too. Five prompts run under one trace here, and a wrong
+  // attribution is worse than a trace-level record of all five.
+  const metadata: Record<string, string> = {
+    ticketId: ticket.id,
+    source: ticket.source,
+    promptLabel: prompts.label,
+    ...Object.fromEntries(
+      Object.entries(promptVersions(prompts)).map(([name, version]) => [`prompt.${name}`, version]),
+    ),
+  };
 
   return propagateAttributes({ sessionId, tags, metadata, traceName: "resolve-ticket" }, () =>
     startActiveObservation(

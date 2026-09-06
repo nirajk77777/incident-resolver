@@ -7,46 +7,58 @@ import { createDeepAgent } from "deepagents";
 import { toolStrategy } from "langchain";
 import { createProcedureGuard } from "./guard";
 import type { Models } from "./models";
-import { applyConfidencePolicy, isFastPath } from "./policy";
-import { loadPrompt } from "./prompts";
+import { applyConfidencePolicy, investigationWarnings, isFastPath, ranInParallel } from "./policy";
+import { type Prompts, promptVersions } from "./prompts";
 import { summarizeRun } from "./run-summary";
 import type { Triage } from "./schemas";
 import {
   createDataInvestigatorSubagent,
+  createIncidentHistorianSubagent,
+  createLogInvestigatorSubagent,
   createTriageSubagent,
-  DATA_INVESTIGATOR,
+  investigators,
 } from "./subagents";
+import { createToolErrorGuard } from "./tool-errors";
 
 export type ResolverOptions = {
   config: Config;
   models: Models;
   /** Every tool the MCP client loaded; each subagent picks its own by name. */
   tools: StructuredTool[];
+  /** The prompts for this run, resolved once from Langfuse or the repository. */
+  prompts: Prompts;
   checkpointer: BaseCheckpointSaver;
 };
 
 /**
  * Graph steps a run may take before LangGraph stops it. Each model turn and each tool batch
- * is one step; this slice needs about ten, so sixty leaves room for corrected SQL without
- * letting a confused run loop until the wall-clock timeout in config.
+ * is one step; a fan-out to all three Investigators is still one step, so this slice needs
+ * about a dozen. Sixty leaves room for corrected SQL and a second log search without letting
+ * a confused run loop until the wall-clock timeout in config.
  */
 const RECURSION_LIMIT = 60;
 
 /**
- * The orchestrating deep agent. Triage and the Data Investigator are subagents reached through
- * the task tool, the procedure guard keeps delegations in order, and the run ends with a
- * Verdict in the Zod response format.
+ * The orchestrating deep agent. Triage and the three Investigators are subagents reached
+ * through the task tool, which runs them concurrently when the Resolver asks for them in one
+ * turn. The procedure guard keeps delegations in order and hands each Investigator Triage's
+ * hypothesis as focus, and the run ends with a Verdict in the Zod response format.
  */
-export function createResolver({ config, models, tools, checkpointer }: ResolverOptions) {
+export function createResolver({ config, models, tools, prompts, checkpointer }: ResolverOptions) {
+  const investigator = { model: models.investigator, tools, prompts };
   return createDeepAgent({
     name: "resolver",
     model: models.resolver,
-    systemPrompt: loadPrompt("resolver", { confidenceThreshold: config.confidenceThreshold }),
+    systemPrompt: prompts.text("resolver"),
     subagents: [
-      createTriageSubagent({ model: models.triage, tools }),
-      createDataInvestigatorSubagent({ model: models.investigator, tools }),
+      createTriageSubagent({ model: models.triage, tools, prompts }),
+      createLogInvestigatorSubagent(investigator),
+      createDataInvestigatorSubagent(investigator),
+      createIncidentHistorianSubagent(investigator),
     ],
-    middleware: [createProcedureGuard(config.confidenceThreshold)],
+    // The error guard is outermost: an Investigator that dies comes back as a task tool error
+    // the Resolver can decide around, rather than ending the run.
+    middleware: [createToolErrorGuard(), createProcedureGuard(config.confidenceThreshold)],
     responseFormat: toolStrategy(verdictSchema),
     checkpointer,
   });
@@ -83,6 +95,10 @@ export type RunReport = {
   subagentsInvoked: string[];
   /** Answered from a Help article after Triage alone, with no Investigator run. */
   fastPath: boolean;
+  /** All three Investigators were launched in one turn, so their spans overlap in the trace. */
+  parallelInvestigation: boolean;
+  /** Which version of each prompt this run used: `langfuse v3`, or `file`. */
+  prompts: Record<string, string>;
   /** Ways the run departed from the procedure, for whoever runs the Resolver rather than the Reporter. */
   warnings: string[];
 };
@@ -93,12 +109,13 @@ export type ResolveOptions = {
   /** The LangGraph thread the checkpointer stores this run under. */
   threadId: string;
   config: Config;
+  prompts: Prompts;
   callbacks?: Callbacks;
 };
 
 /** Runs the Resolver on one Ticket and reports its Verdict with what the run did. */
 export async function resolveTicket(options: ResolveOptions): Promise<RunReport> {
-  const { resolver, ticket, threadId, config, callbacks } = options;
+  const { resolver, ticket, threadId, config, prompts, callbacks } = options;
   const result = await resolver.invoke(
     { messages: [new HumanMessage(renderTicket(ticket))] },
     {
@@ -114,8 +131,9 @@ export async function resolveTicket(options: ResolveOptions): Promise<RunReport>
     throw new Error(`The Resolver did not end with a Verdict: ${parsed.error.message}`);
   }
   const verdict = applyConfidencePolicy(parsed.data, config.confidenceThreshold);
-  const { triage, subagentsInvoked } = summarizeRun(result.messages);
-  const investigated = subagentsInvoked.includes(DATA_INVESTIGATOR);
+  const summary = summarizeRun(result.messages);
+  const { triage, subagentsInvoked } = summary;
+  const investigated = investigators.some((name) => subagentsInvoked.includes(name));
   const qualifiedForFastPath =
     triage !== undefined && isFastPath(triage, config.confidenceThreshold);
 
@@ -123,6 +141,7 @@ export async function resolveTicket(options: ResolveOptions): Promise<RunReport>
   if (triage === undefined) {
     warnings.push("The Resolver did not run Triage, or Triage returned no structured output");
   }
+  warnings.push(...investigationWarnings(summary));
   if (verdict.outcome !== parsed.data.outcome) {
     warnings.push(
       `Confidence ${verdict.confidence} is below the threshold ${config.confidenceThreshold}: outcome ${parsed.data.outcome} was escalated`,
@@ -136,6 +155,8 @@ export async function resolveTicket(options: ResolveOptions): Promise<RunReport>
     triage,
     subagentsInvoked,
     fastPath: qualifiedForFastPath && !investigated && verdict.outcome === "answered",
+    parallelInvestigation: ranInParallel(summary),
+    prompts: promptVersions(prompts),
     warnings,
   };
 }

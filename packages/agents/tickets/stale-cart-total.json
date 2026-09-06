@@ -1,0 +1,6 @@
+{
+  "id": "50000000-0000-4000-8000-000000000003",
+  "source": "tester",
+  "title": "Cart total wrong after removing item",
+  "body": "Testing the cart on Ava Chen's account (ava.chen@example.com). I added two products to the cart, then removed one of them from the cart page. The cart page lists the one remaining line at the right price, but the header cart tag still shows two items and the old total. A hard refresh does not change it, and adding another product brings the tag back in line. Nothing in the UI is obviously broken, so I think the stored total is wrong rather than the page."
+}

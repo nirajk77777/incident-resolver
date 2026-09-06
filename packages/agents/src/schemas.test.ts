@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { dataInvestigationSchema, triageSchema } from "./schemas";
+import {
+  dataInvestigationSchema,
+  incidentSearchSchema,
+  logInvestigationSchema,
+  triageSchema,
+} from "./schemas";
 
 const triage = {
   category: "question",
@@ -65,5 +70,64 @@ describe("dataInvestigationSchema", () => {
     };
     const result = dataInvestigationSchema.parse({ summary: "s", evidence: [], proposal });
     expect(result.proposal).toEqual(proposal);
+  });
+});
+
+describe("logInvestigationSchema", () => {
+  const investigation = {
+    summary: "The checkout request failed with a 402 from the mock gateway.",
+    evidence: [
+      {
+        fact: "payment declined: insufficient_funds, card ending 0002",
+        provenance:
+          'search_logs {service_name="shoplite-api"} | trace_id="4bf92f3577b34da6a3ce929d0e0e4736" at 2026-09-06T09:12:03Z',
+      },
+    ],
+    traceIds: ["4bf92f3577b34da6a3ce929d0e0e4736"],
+    errorRate: null,
+  };
+
+  it("accepts Evidence with the trace ids the run can link the Ticket to", () => {
+    expect(logInvestigationSchema.parse(investigation)).toEqual(investigation);
+  });
+
+  it("rejects a trace id that is not 32 hex characters", () => {
+    expect(
+      logInvestigationSchema.safeParse({ ...investigation, traceIds: ["not-a-trace"] }).success,
+    ).toBe(false);
+  });
+});
+
+describe("incidentSearchSchema", () => {
+  it("carries each match with its documented resolution and rerank score", () => {
+    const result = incidentSearchSchema.parse({
+      summary: "One past Incident documents the same stale cart_totals row.",
+      matches: [
+        {
+          id: "30000000-0000-4000-8000-000000000001",
+          title: "Cart tag shows a stale item count and total after removing an item",
+          rootCause: "removeItem does not refresh the denormalised cart_totals row",
+          resolution:
+            "UPDATE shoplite.cart_totals SET item_count = ... WHERE cart_id = '<cart id>'",
+          relevanceScore: 0.94,
+        },
+      ],
+      evidence: [
+        {
+          fact: "A March Incident describes the same symptom and documents the recompute UPDATE",
+          provenance: "search_similar_incidents: incident 30000000-0000-4000-8000-000000000001",
+        },
+      ],
+    });
+    expect(result.matches[0]?.relevanceScore).toBe(0.94);
+  });
+
+  it("accepts an empty match list rather than forcing a near miss", () => {
+    const result = incidentSearchSchema.parse({
+      summary: "No past Incident matches this Ticket.",
+      matches: [],
+      evidence: [],
+    });
+    expect(result.matches).toEqual([]);
   });
 });
