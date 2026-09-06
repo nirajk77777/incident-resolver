@@ -152,6 +152,38 @@ describe("checkReadonlySql for a customer Ticket", () => {
     ).toBe(false);
   });
 
+  it("accepts tables joined on id columns to a filtered one", () => {
+    const accepted = [
+      `SELECT * FROM cart_items ci JOIN carts c ON c.id = ci.cart_id WHERE c.customer_id = '${ava}'`,
+      `SELECT * FROM cart_totals ct JOIN carts c ON c.id = ct.cart_id JOIN customers cu ON cu.id = c.customer_id WHERE cu.id = '${ava}'`,
+      `SELECT * FROM orders o, payments p WHERE p.order_id = o.id AND o.customer_id = '${ava}'`,
+      `SELECT * FROM (SELECT id FROM carts WHERE customer_id = '${ava}') mine JOIN cart_totals ct ON ct.cart_id = mine.id`,
+    ];
+    for (const sql of accepted)
+      expect(checkReadonlySql(sql, scoped), sql).toMatchObject({ ok: true });
+  });
+
+  it("rejects a customer-owned table that is not tied to the filter and names it", () => {
+    const rejected = [
+      `SELECT p.* FROM payments p, orders o WHERE o.customer_id = '${ava}'`,
+      `SELECT p.* FROM orders o JOIN payments p ON true WHERE o.customer_id = '${ava}'`,
+      `SELECT c.email FROM orders o JOIN customers c ON c.id <> o.customer_id WHERE o.customer_id = '${ava}'`,
+      `SELECT p.* FROM orders o JOIN payments p ON p.amount_cents = o.total_cents WHERE o.customer_id = '${ava}'`,
+      `SELECT * FROM orders, payments WHERE customer_id = '${ava}'`,
+    ];
+    for (const sql of rejected)
+      expect(checkReadonlySql(sql, scoped), sql).toMatchObject({ ok: false });
+
+    const result = checkReadonlySql(rejected[0] as string, scoped);
+    if (!result.ok) expect(result.reason).toContain("Unfiltered here: payments (p)");
+  });
+
+  it("rejects a scalar subquery that reads another customer's data", () => {
+    expect(
+      checkReadonlySql("SELECT (SELECT email FROM customers LIMIT 1) FROM products", scoped).ok,
+    ).toBe(false);
+  });
+
   it("rejects tables outside ShopLite, so metadata comes from describe_schema", () => {
     const result = checkReadonlySql("SELECT * FROM information_schema.columns", scoped);
     expect(result.ok).toBe(false);

@@ -1,5 +1,6 @@
 import type { Pool } from "pg";
 import type { Reporter } from "./reporter";
+import { tenantTableList } from "./sql-guard";
 
 export type ColumnInfo = {
   name: string;
@@ -66,7 +67,7 @@ export function formatSchema(tables: TableInfo[], reporter: Reporter | undefined
   if (reporter) {
     lines.push(
       `This is a customer Ticket for customer ${reporter.customerId} (${reporter.email}).`,
-      "Every SELECT that reads customers, carts, cart_items, cart_totals, orders, or payments",
+      `Every SELECT that reads ${tenantTableList}`,
       `must filter by customer_id = '${reporter.customerId}' (id = '${reporter.customerId}' on customers).`,
       "cart_items and cart_totals belong to a customer through carts.customer_id.",
       "",

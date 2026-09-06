@@ -72,6 +72,14 @@ describe("redact walks result structures", () => {
     ]);
   });
 
+  it("masks a numeric value that is shaped like a card number", () => {
+    expect(redact({ n: 4242424242424242, amount: 1200, ratio: 0.5 }, {})).toEqual({
+      n: "[redacted card]",
+      amount: 1200,
+      ratio: 0.5,
+    });
+  });
+
   it("does not mutate its input", () => {
     const row = { email: "liam.okafor@example.com" };
     redact(row, {});

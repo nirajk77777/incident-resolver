@@ -1,6 +1,7 @@
 /**
  * Masks card numbers and other people's emails in anything a tool returns, so every
- * result is safe to show on the Ticket timeline. Implemented here, not in a prompt.
+ * result is safe to show on the Ticket timeline. Shared by the database and
+ * observability MCP servers. Implemented here, not in a prompt.
  */
 
 export type RedactionOptions = {
@@ -24,11 +25,17 @@ export function redact<T>(value: T, options: RedactionOptions): T {
 
 function walk(value: unknown, reporterEmail: string | undefined): unknown {
   if (typeof value === "string") return redactString(value, reporterEmail);
+  if (typeof value === "number") return looksLikeCard(value) ? CARD_MASK : value;
   if (Array.isArray(value)) return value.map((item) => walk(item, reporterEmail));
   if (value instanceof Date || value === null || typeof value !== "object") return value;
   return Object.fromEntries(
     Object.entries(value).map(([key, item]) => [key, walk(item, reporterEmail)]),
   );
+}
+
+/** A numeric column can carry a card number too, for example through a cast. */
+function looksLikeCard(value: number): boolean {
+  return Number.isInteger(value) && /^\d{13,19}$/.test(String(Math.abs(value)));
 }
 
 function redactString(text: string, reporterEmail: string | undefined): string {

@@ -1,10 +1,15 @@
 import { fileURLToPath } from "node:url";
-import { createDb, loadConfig, runMigrations } from "@incident-resolver/shared";
+import {
+  createDb,
+  type DataFixProposal,
+  loadConfig,
+  runMigrations,
+} from "@incident-resolver/shared";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { Client as PgClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { DataFixProposal, QueryResult } from "./server";
+import type { QueryResult } from "./server";
 
 // Needs `docker compose up`, this repo's `pnpm db:migrate`, and ShopLite's
 // `pnpm db:migrate && pnpm db:seed`. Run with `pnpm test:integration`.

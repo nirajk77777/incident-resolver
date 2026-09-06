@@ -1,12 +1,16 @@
 import {
+  type DeleteStatement,
   type Expr,
+  type ExprRef,
   type From,
   parse,
   type QNameAliased,
   type SelectStatement,
   type Statement,
   toSql,
+  type UpdateStatement,
 } from "pgsql-ast-parser";
+import { messageOf } from "./errors";
 
 /**
  * Static checks on SQL before it reaches Postgres.
@@ -15,11 +19,13 @@ import {
  * clear reason instead of a permission error, and enforces the one rule the role cannot:
  * a customer Ticket only reads that customer's rows.
  *
- * Tenant scoping is a filter check, not a proof of isolation. Every SELECT that reads a
- * customer-owned table must carry `customer_id = '<reporter>'` (or `id = '<reporter>'` on
- * customers) as a top-level AND condition, directly or through an IN or EXISTS subquery that
- * carries it. Join graphs are not analysed, so a deliberate cross join could still widen a
- * result; a row-level security policy on the reader role is the next hardening step.
+ * Tenant scoping works per table reference. A reference to a customer-owned table is
+ * "pinned" when a top-level AND condition sets its customer_id (or id, on customers) to the
+ * reporter, when its column is IN or EXISTS a subquery that is itself pinned, when it is a
+ * CTE or derived table that is pinned, or when it is joined on id columns to a pinned
+ * reference. Every customer-owned reference in a SELECT must end up pinned. This is a
+ * filter check, not row-level security: a join on a non-id column is refused rather than
+ * analysed, and a policy on the reader role remains the next hardening step.
  */
 
 export type TenantScope = { reporterCustomerId: string };
@@ -32,14 +38,17 @@ export type DataFixSqlCheck =
 
 const SHOPLITE = "shoplite";
 /** Tables whose rows belong to one customer, directly or through their cart. */
-const tenantTables = new Set([
+export const tenantTables = [
   "customers",
   "carts",
   "cart_items",
   "cart_totals",
   "orders",
   "payments",
-]);
+] as const;
+/** The same list as prose, for tool descriptions and rejection messages. */
+export const tenantTableList = `${tenantTables.slice(0, -1).join(", ")}, or ${tenantTables.at(-1)}`;
+const tenantTableSet = new Set<string>(tenantTables);
 const publicTables = new Set(["products", "discount_codes"]);
 
 /** Accepts exactly one SELECT (CTEs and unions included) and applies the reporter scope. */
@@ -89,11 +98,7 @@ export function checkDataFixSql(sql: string, scope?: TenantScope): DataFixSqlChe
     };
   }
   if (scope) {
-    const violation =
-      nestedViolation(statement, scope, new Map()) ??
-      (tenantTables.has(table) && !hasScopeFilter(statement.where, scope, new Map(), new Map())
-        ? unscopedReason([table], scope)
-        : undefined);
+    const violation = dataFixViolation(statement, target, table, scope);
     if (violation) return { ok: false, reason: violation };
   }
   return {
@@ -109,8 +114,7 @@ function parseSingle(sql: string): { statement: Statement } | Rejected {
   try {
     statements = parse(sql);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return { ok: false, reason: `Could not parse the SQL. ${message.split("\n")[0]}` };
+    return { ok: false, reason: `Could not parse the SQL. ${messageOf(error).split("\n")[0]}` };
   }
   const [statement] = statements;
   if (!statement || statements.length !== 1) {
@@ -138,7 +142,7 @@ function isReadOnly(statement: Statement): boolean {
 /** The bare table name if `name` is a ShopLite table, else undefined. */
 function shopliteTable(name: QNameAliased): string | undefined {
   const inShoplite = name.schema === undefined || name.schema === SHOPLITE;
-  const known = tenantTables.has(name.name) || publicTables.has(name.name);
+  const known = tenantTableSet.has(name.name) || publicTables.has(name.name);
   return inShoplite && known ? name.name : undefined;
 }
 
@@ -146,170 +150,244 @@ function qualified(name: QNameAliased): string {
   return name.schema ? `${name.schema}.${name.name}` : name.name;
 }
 
-/** CTE name to whether that CTE already carries the reporter filter. */
+/** CTE name to whether that CTE is pinned to the reporter. */
 type Ctes = Map<string, boolean>;
 
-/**
- * Returns why `statement` breaks the reporter scope, or undefined if it respects it.
- * `ctes` are derived tables already checked where they were defined.
- */
+/** One entry of a FROM list: a table, a CTE, a derived table, or a set-returning call. */
+type Source = {
+  alias: string;
+  /** Set for ShopLite tables only. */
+  table: string | undefined;
+  /** True for CTEs and derived tables that are already pinned to the reporter. */
+  pinned: boolean;
+};
+
+type Analysis = {
+  /** Aliases pinned to the reporter. Non-empty means the statement carries the filter. */
+  pinned: Set<string>;
+  violation: string | undefined;
+};
+
+/** Returns why `statement` breaks the reporter scope, or undefined if it respects it. */
 function scopeViolation(statement: Statement, scope: TenantScope, ctes: Ctes): string | undefined {
+  return isSelect(statement)
+    ? analyseSelect(statement, scope, ctes).violation
+    : nestedViolation(statement, scope, ctes, []);
+}
+
+function analyseSelect(statement: SelectStatement, scope: TenantScope, ctes: Ctes): Analysis {
   switch (statement.type) {
-    case "select":
-      return selectViolation(statement, scope, ctes);
-    case "union":
-    case "union all":
-      return (
-        scopeViolation(statement.left, scope, ctes) ?? scopeViolation(statement.right, scope, ctes)
+    case "select": {
+      const sources = collectSources(statement.from ?? [], scope, ctes);
+      if (sources.violation) return { pinned: new Set(), violation: sources.violation };
+      const conditions = [...conjuncts(statement.where), ...sources.conditions];
+      const pinned = resolvePinned(sources.sources, conditions, scope, ctes);
+      const unpinned = sources.sources.filter(
+        (source) => source.table && tenantTableSet.has(source.table) && !pinned.has(source.alias),
       );
+      if (unpinned.length > 0) {
+        return { pinned, violation: unscopedReason(unpinned.map(labelOf), scope) };
+      }
+      return { pinned, violation: nestedViolation(statement, scope, ctes, sources.derived) };
+    }
+    case "union":
+    case "union all": {
+      const left = analyseSelect(statement.left, scope, ctes);
+      const right = analyseSelect(statement.right, scope, ctes);
+      const both = left.pinned.size > 0 && right.pinned.size > 0;
+      return {
+        pinned: both ? new Set([...left.pinned, ...right.pinned]) : new Set(),
+        violation: left.violation ?? right.violation,
+      };
+    }
     case "with": {
       const inner = new Map(ctes);
       for (const bind of statement.bind) {
-        const violation = scopeViolation(bind.statement, scope, inner);
-        if (violation) return violation;
-        inner.set(
-          bind.alias.name,
-          isSelect(bind.statement) && selectHasScopeFilter(bind.statement, scope, inner),
-        );
+        const analysis = analyseBinding(bind.statement, scope, inner);
+        if (analysis.violation) return analysis;
+        inner.set(bind.alias.name, analysis.pinned.size > 0);
       }
-      return scopeViolation(statement.in, scope, inner);
+      return analyseBinding(statement.in, scope, inner);
     }
     case "with recursive": {
       const inner = new Map(ctes).set(statement.alias.name, false);
-      return (
-        scopeViolation(statement.bind, scope, inner) ?? scopeViolation(statement.in, scope, inner)
-      );
+      const bind = analyseSelect(statement.bind, scope, inner);
+      if (bind.violation) return bind;
+      return analyseBinding(statement.in, scope, inner);
     }
     default:
-      return nestedViolation(statement, scope, ctes);
+      return { pinned: new Set(), violation: undefined };
   }
 }
 
-function selectViolation(
-  select: Extract<Statement, { type: "select" }>,
+function analyseBinding(statement: Statement, scope: TenantScope, ctes: Ctes): Analysis {
+  return isSelect(statement)
+    ? analyseSelect(statement, scope, ctes)
+    : { pinned: new Set(), violation: nestedViolation(statement, scope, ctes, []) };
+}
+
+function dataFixViolation(
+  statement: UpdateStatement | DeleteStatement,
+  target: QNameAliased,
+  table: string,
   scope: TenantScope,
-  ctes: Ctes,
+  ctes: Ctes = new Map(),
 ): string | undefined {
-  const aliases = new Map<string, string>();
-  const unscoped: string[] = [];
+  const extra = statement.type === "update" && statement.from ? [statement.from] : [];
+  const collected = collectSources(extra, scope, ctes);
+  if (collected.violation) return collected.violation;
 
-  for (const source of select.from ?? []) {
-    if (source.type === "statement") {
-      const violation = scopeViolation(source.statement, scope, ctes);
-      if (violation) return violation;
-      continue;
-    }
-    if (source.type !== "table") continue;
-    if (source.name.schema === undefined && ctes.has(source.name.name)) continue;
-
-    const table = shopliteTable(source.name);
-    if (!table) {
-      return (
-        `Only ShopLite tables can be read for a customer Ticket, not ${qualified(source.name)}. ` +
-        "Use describe_schema for table and column metadata."
-      );
-    }
-    aliases.set(source.name.alias ?? table, table);
-    if (tenantTables.has(table)) unscoped.push(table);
+  const targetSource: Source = { alias: target.alias ?? table, table, pinned: false };
+  const sources = [targetSource, ...collected.sources];
+  const conditions = [...conjuncts(statement.where), ...collected.conditions];
+  const pinned = resolvePinned(sources, conditions, scope, ctes);
+  if (tenantTableSet.has(table) && !pinned.has(targetSource.alias)) {
+    return unscopedReason([labelOf(targetSource)], scope);
   }
-
-  if (unscoped.length > 0 && !hasScopeFilter(select.where, scope, aliases, ctes)) {
-    return unscopedReason(unscoped, scope);
-  }
-  return nestedViolation(select, scope, ctes, select.from ?? []);
+  return nestedViolation(statement, scope, ctes, collected.derived);
 }
 
-function unscopedReason(tables: string[], scope: TenantScope): string {
-  const id = scope.reporterCustomerId;
-  return (
-    "This is a customer Ticket, so every SELECT that reads a customer-owned table " +
-    `(${[...tenantTables].join(", ")}) must filter by the reporter. Add customer_id = '${id}' ` +
-    `as an AND condition (id = '${id}' on customers), or filter through ` +
-    `IN (SELECT id FROM carts WHERE customer_id = '${id}'). Unfiltered here: ${tables.join(", ")}.`
-  );
+type CollectedSources = {
+  sources: Source[];
+  /** Conjuncts of every JOIN ... ON clause. */
+  conditions: Expr[];
+  /** Derived-table statements already analysed, so the nested walk skips them. */
+  derived: SelectStatement[];
+  violation?: string;
+};
+
+function collectSources(from: From[], scope: TenantScope, ctes: Ctes): CollectedSources {
+  const collected: CollectedSources = { sources: [], conditions: [], derived: [] };
+  for (const entry of from) {
+    if (entry.join?.on) collected.conditions.push(...conjuncts(entry.join.on));
+    switch (entry.type) {
+      case "table": {
+        const { name } = entry;
+        if (name.schema === undefined && ctes.has(name.name)) {
+          collected.sources.push({
+            alias: name.alias ?? name.name,
+            table: undefined,
+            pinned: ctes.get(name.name) === true,
+          });
+          break;
+        }
+        const table = shopliteTable(name);
+        if (!table) {
+          return {
+            ...collected,
+            violation:
+              `Only ShopLite tables can be read for a customer Ticket, not ${qualified(name)}. ` +
+              "Use describe_schema for table and column metadata.",
+          };
+        }
+        collected.sources.push({ alias: name.alias ?? table, table, pinned: false });
+        break;
+      }
+      case "statement": {
+        const inner = analyseSelect(entry.statement, scope, ctes);
+        if (inner.violation) return { ...collected, violation: inner.violation };
+        collected.sources.push({
+          alias: entry.alias,
+          table: undefined,
+          pinned: inner.pinned.size > 0,
+        });
+        collected.derived.push(entry.statement);
+        break;
+      }
+      case "call":
+        collected.sources.push({
+          alias: entry.alias?.name ?? entry.function.name,
+          table: undefined,
+          pinned: false,
+        });
+        break;
+    }
+  }
+  return collected;
 }
 
 /**
- * True if one top-level AND condition of `where` pins the reporter: `customer_id = '<id>'`,
- * `id = '<id>'` on customers, or an IN / EXISTS subquery that itself carries the filter.
+ * Seeds the pinned set from conditions that name the reporter, then spreads it along
+ * equalities between id columns until nothing changes.
  */
-function hasScopeFilter(
-  where: Expr | null | undefined,
+function resolvePinned(
+  sources: Source[],
+  conditions: Expr[],
   scope: TenantScope,
-  aliases: Map<string, string>,
   ctes: Ctes,
-): boolean {
-  return conjuncts(where).some((condition) => {
-    if (condition.type === "binary" && condition.op === "=") {
-      return (
-        pinsReporter(condition.left, condition.right, scope, aliases) ||
-        pinsReporter(condition.right, condition.left, scope, aliases)
-      );
-    }
-    if (condition.type === "binary" && condition.op === "IN") {
-      return isSelect(condition.right) && selectHasScopeFilter(condition.right, scope, ctes);
-    }
-    if (condition.type === "call" && condition.function.name.toLowerCase() === "exists") {
-      const [subquery] = condition.args;
-      return (
-        subquery !== undefined && isSelect(subquery) && selectHasScopeFilter(subquery, scope, ctes)
-      );
-    }
-    return false;
-  });
-}
+): Set<string> {
+  const pinned = new Set(sources.filter((s) => s.pinned).map((s) => s.alias));
+  const [only] = sources;
+  const aliasOf = (ref: ExprRef): string | undefined =>
+    ref.table?.name ?? (sources.length === 1 ? only?.alias : undefined);
+  const tableOf = (alias: string | undefined): string | undefined =>
+    sources.find((s) => s.alias === alias)?.table;
+  const carries = (subquery: SelectStatement): boolean => {
+    const analysis = analyseSelect(subquery, scope, ctes);
+    return analysis.violation === undefined && analysis.pinned.size > 0;
+  };
+  const pin = (ref: ExprRef | undefined) => {
+    const alias = ref && aliasOf(ref);
+    if (alias) pinned.add(alias);
+  };
+  const edges: Array<[string, string]> = [];
 
-/** A SELECT carries the filter if its WHERE has it, or if it reads a CTE that carries it. */
-function selectHasScopeFilter(statement: SelectStatement, scope: TenantScope, ctes: Ctes): boolean {
-  switch (statement.type) {
-    case "select": {
-      const from = statement.from ?? [];
-      const readsScopedCte = from.some(
-        (source) =>
-          source.type === "table" &&
-          source.name.schema === undefined &&
-          ctes.get(source.name.name) === true,
-      );
-      return readsScopedCte || hasScopeFilter(statement.where, scope, aliasesOf(from), ctes);
-    }
-    case "union":
-    case "union all":
-      return (
-        selectHasScopeFilter(statement.left, scope, ctes) &&
-        selectHasScopeFilter(statement.right, scope, ctes)
-      );
-    case "with": {
-      const inner = new Map(ctes);
-      for (const bind of statement.bind) {
-        inner.set(
-          bind.alias.name,
-          isSelect(bind.statement) && selectHasScopeFilter(bind.statement, scope, inner),
+  for (const condition of conditions) {
+    if (condition.type === "binary" && condition.op === "=") {
+      const { left, right } = condition;
+      if (left.type === "ref" && right.type === "ref") {
+        const a = aliasOf(left);
+        const b = aliasOf(right);
+        if (a && b && isIdColumn(left.name) && isIdColumn(right.name)) edges.push([a, b]);
+      } else {
+        pin(
+          pinsReporter(left, right, scope, aliasOf, tableOf) ??
+            pinsReporter(right, left, scope, aliasOf, tableOf),
         );
       }
-      return isSelect(statement.in) && selectHasScopeFilter(statement.in, scope, inner);
+    } else if (condition.type === "binary" && condition.op === "IN") {
+      if (condition.left.type === "ref" && isSelect(condition.right) && carries(condition.right)) {
+        pin(condition.left);
+      }
+    } else if (condition.type === "call" && condition.function.name.toLowerCase() === "exists") {
+      const [subquery] = condition.args;
+      if (subquery && isSelect(subquery) && carries(subquery) && sources.length === 1) {
+        pin({ type: "ref", name: "*" });
+      }
     }
-    case "with recursive":
-      return isSelect(statement.in) && selectHasScopeFilter(statement.in, scope, ctes);
-    default:
-      return false;
   }
+
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const [a, b] of edges) {
+      if (pinned.has(a) !== pinned.has(b)) {
+        pinned.add(a).add(b);
+        grew = true;
+      }
+    }
+  }
+  return pinned;
 }
 
+/** The column reference if `column = value` names the reporter, else undefined. */
 function pinsReporter(
   column: Expr,
   value: Expr,
   scope: TenantScope,
-  aliases: Map<string, string>,
-): boolean {
-  if (column.type !== "ref") return false;
+  aliasOf: (ref: ExprRef) => string | undefined,
+  tableOf: (alias: string | undefined) => string | undefined,
+): ExprRef | undefined {
+  if (column.type !== "ref") return undefined;
   const literal = stringValue(value);
-  if (literal === undefined || literal.toLowerCase() !== scope.reporterCustomerId.toLowerCase()) {
-    return false;
-  }
-  if (column.name === "customer_id") return true;
-  if (column.name !== "id") return false;
-  if (column.table) return aliases.get(column.table.name) === "customers";
-  return aliases.size === 1 && [...aliases.values()][0] === "customers";
+  if (literal?.toLowerCase() !== scope.reporterCustomerId.toLowerCase()) return undefined;
+  if (column.name === "customer_id") return column;
+  if (column.name === "id" && tableOf(aliasOf(column)) === "customers") return column;
+  return undefined;
+}
+
+function isIdColumn(name: string): boolean {
+  return name === "id" || name.endsWith("_id");
 }
 
 function stringValue(expr: Expr): string | undefined {
@@ -326,61 +404,57 @@ function conjuncts(expr: Expr | null | undefined): Expr[] {
   return [expr];
 }
 
-function aliasesOf(from: From[]): Map<string, string> {
-  const aliases = new Map<string, string>();
-  for (const source of from) {
-    if (source.type !== "table") continue;
-    const table = shopliteTable(source.name);
-    if (table) aliases.set(source.name.alias ?? table, table);
-  }
-  return aliases;
+function labelOf(source: Source): string {
+  return source.alias === source.table ? source.alias : `${source.table} (${source.alias})`;
+}
+
+function unscopedReason(labels: string[], scope: TenantScope): string {
+  const id = scope.reporterCustomerId;
+  return (
+    "This is a customer Ticket, so every table that belongs to a customer " +
+    `(${tenantTableList}) must be filtered by the reporter. Add customer_id = '${id}' ` +
+    `as an AND condition (id = '${id}' on customers), join the table on an id column to one ` +
+    `that has that condition, or filter through IN (SELECT id FROM carts WHERE customer_id = '${id}'). ` +
+    `Unfiltered here: ${labels.join(", ")}.`
+  );
 }
 
 const selectTypes = new Set(["select", "union", "union all", "with", "with recursive"]);
 
-function isSelect(expr: unknown): expr is SelectStatement {
+function isSelect(node: unknown): node is SelectStatement {
   return (
-    typeof expr === "object" &&
-    expr !== null &&
-    "type" in expr &&
-    typeof expr.type === "string" &&
-    selectTypes.has(expr.type)
+    typeof node === "object" &&
+    node !== null &&
+    "type" in node &&
+    typeof node.type === "string" &&
+    selectTypes.has(node.type)
   );
 }
 
 /**
  * Checks every SELECT nested anywhere inside `node` (scalar subqueries, IN lists, SET
- * values), skipping the FROM sources the caller has already walked.
+ * values, JOIN conditions), skipping derived tables the caller has already analysed.
  */
 function nestedViolation(
-  node: object,
+  node: unknown,
   scope: TenantScope,
   ctes: Ctes,
-  skip: readonly unknown[] = [],
+  skip: readonly SelectStatement[],
 ): string | undefined {
-  for (const [key, value] of Object.entries(node)) {
-    if (key === "_location" || skip.includes(value)) continue;
-    const violation = violationIn(value, scope, ctes, skip);
-    if (violation) return violation;
-  }
-  return undefined;
-}
-
-function violationIn(
-  value: unknown,
-  scope: TenantScope,
-  ctes: Ctes,
-  skip: readonly unknown[],
-): string | undefined {
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      if (skip.includes(item)) continue;
-      const violation = violationIn(item, scope, ctes, skip);
+  if (typeof node !== "object" || node === null) return undefined;
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      const violation = nestedViolation(item, scope, ctes, skip);
       if (violation) return violation;
     }
     return undefined;
   }
-  if (typeof value !== "object" || value === null) return undefined;
-  if (isSelect(value)) return scopeViolation(value, scope, ctes);
-  return nestedViolation(value, scope, ctes, skip);
+  for (const [key, value] of Object.entries(node)) {
+    if (key === "_location" || skip.includes(value as SelectStatement)) continue;
+    const violation = isSelect(value)
+      ? scopeViolation(value, scope, ctes)
+      : nestedViolation(value, scope, ctes, skip);
+    if (violation) return violation;
+  }
+  return undefined;
 }

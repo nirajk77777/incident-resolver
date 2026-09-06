@@ -1,11 +1,12 @@
+import { type DataFixProposal, redact } from "@incident-resolver/shared";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { Pool } from "pg";
 import { z } from "zod";
 import { describeSchema, formatSchema } from "./describe-schema";
-import { redact } from "./redact";
+import { messageOf } from "./errors";
 import type { Reporter } from "./reporter";
-import { checkDataFixSql, checkReadonlySql } from "./sql-guard";
+import { checkDataFixSql, checkReadonlySql, tenantTableList } from "./sql-guard";
 
 export type DatabaseServerOptions = {
   /** Connected as the SELECT-only role, see migration 0002. */
@@ -15,21 +16,6 @@ export type DatabaseServerOptions = {
   /** Rows a read-only query returns before being truncated. */
   rowCap: number;
 };
-
-export const dataFixProposalSchema = z.object({
-  kind: z.literal("data_fix"),
-  statement: z.enum(["update", "delete"]),
-  table: z.string(),
-  sql: z.string(),
-  reason: z.string(),
-  /** How many rows the WHERE clause matches right now, or null if that could not be counted. */
-  matchingRows: z.number().int().nullable(),
-  /** Always false here. Only the portal runs a data fix, and only after a Decision. */
-  executed: z.literal(false),
-});
-
-/** A data fix the agent wants to run, handed to the approval gate untouched. */
-export type DataFixProposal = z.infer<typeof dataFixProposalSchema>;
 
 export type QueryResult = {
   columns: string[];
@@ -45,7 +31,7 @@ export function createDatabaseServer(options: DatabaseServerOptions): McpServer 
   const scope = reporter ? { reporterCustomerId: reporter.customerId } : undefined;
   const redacted = <T>(value: T): T => redact(value, { reporterEmail: reporter?.email });
   const scopeNote = reporter
-    ? ` This is a customer Ticket: every SELECT on customers, carts, cart_items, cart_totals, orders, or payments must filter by customer_id = '${reporter.customerId}'.`
+    ? ` This is a customer Ticket: every SELECT on ${tenantTableList} must filter by customer_id = '${reporter.customerId}'.`
     : "";
 
   const server = new McpServer({ name: "mcp-database", version: "0.0.0" });
@@ -143,8 +129,4 @@ function text(value: string): CallToolResult {
 
 function failure(reason: string): CallToolResult {
   return { content: [{ type: "text", text: reason }], isError: true };
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
