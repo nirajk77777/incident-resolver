@@ -1,3 +1,4 @@
+import { messageOf } from "@incident-resolver/shared";
 import {
   type DeleteStatement,
   type Expr,
@@ -10,7 +11,6 @@ import {
   toSql,
   type UpdateStatement,
 } from "pgsql-ast-parser";
-import { messageOf } from "./errors";
 
 /**
  * Static checks on SQL before it reaches Postgres.

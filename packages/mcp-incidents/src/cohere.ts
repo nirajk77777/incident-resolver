@@ -3,10 +3,11 @@ import type { Embedder, Reranker } from "./retrieval";
 
 export type CohereOptions = {
   apiKey: string;
-  /** `embed-v4.0`. The wrapper cannot set `output_dimension`, so vectors are its default 1536. */
-  embeddingModel: string;
-  /** `rerank-v3.5`. */
-  rerankModel: string;
+  /**
+   * `config.models`: `embeddings` is embed-v4.0, whose default 1536 dimensions the wrapper
+   * cannot change, and `rerank` is rerank-v3.5.
+   */
+  models: { embeddings: string; rerank: string };
 };
 
 /**
@@ -19,9 +20,9 @@ export function createCohereProviders(options: CohereOptions): {
 } {
   const embeddings = new CohereEmbeddings({
     apiKey: options.apiKey,
-    model: options.embeddingModel,
+    model: options.models.embeddings,
   });
-  const rerank = new CohereRerank({ apiKey: options.apiKey, model: options.rerankModel });
+  const rerank = new CohereRerank({ apiKey: options.apiKey, model: options.models.rerank });
   return {
     embedder: embeddings,
     reranker: {

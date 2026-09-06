@@ -1,10 +1,10 @@
+import { messageOf } from "@incident-resolver/shared";
 import { incidentCategories } from "@incident-resolver/shared/db";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { helpArticleDocument, incidentDocument } from "./documents";
-import { messageOf } from "./errors";
-import { type Embedder, type Ranked, type Reranker, searchRanked } from "./retrieval";
+import { type Candidate, type Embedder, type Reranker, searchRanked } from "./retrieval";
 import type { HelpArticleRecord, IncidentRecord, KnowledgeStore } from "./store";
 
 export type IncidentsServerOptions = {
@@ -17,16 +17,10 @@ export type IncidentsServerOptions = {
   topK: number;
 };
 
-/** What `search_similar_incidents` returns. */
-export type IncidentSearchResult = {
+/** What both search tools return: the matches with their scores, best first. */
+export type SearchResult<T> = {
   query: string;
-  results: Array<IncidentRecord & { similarity: number; relevanceScore: number }>;
-};
-
-/** What `search_help_articles` returns. */
-export type HelpArticleSearchResult = {
-  query: string;
-  results: Array<HelpArticleRecord & { similarity: number; relevanceScore: number }>;
+  results: Array<T & { similarity: number; relevanceScore: number }>;
 };
 
 /** Builds the `mcp-incidents` server. Connect it to a transport to serve. */
@@ -34,13 +28,44 @@ export function createIncidentsServer(options: IncidentsServerOptions): McpServe
   const { store, embedder, reranker, candidates, topK } = options;
   const server = new McpServer({ name: "mcp-incidents", version: "0.0.0" });
 
-  const k = z
+  const kSchema = z
     .number()
     .int()
     .min(1)
     .max(candidates)
     .default(topK)
     .describe(`How many matches to return after reranking, ${topK} unless you need more`);
+
+  /** One search handler for both tables: embed, take the nearest, rerank, flatten. */
+  const search =
+    <T extends object>(
+      fetchCandidates: (embedding: number[], limit: number) => Promise<Candidate<T>[]>,
+      documentOf: (item: T) => string,
+    ) =>
+    async ({ text: query, k }: { text: string; k: number }): Promise<CallToolResult> => {
+      try {
+        const ranked = await searchRanked<T>({
+          query,
+          embedder,
+          reranker,
+          fetchCandidates,
+          documentOf,
+          candidates,
+          topK: k,
+        });
+        const payload: SearchResult<T> = {
+          query,
+          results: ranked.map(({ item, similarity, relevanceScore }) => ({
+            ...item,
+            similarity,
+            relevanceScore,
+          })),
+        };
+        return text(JSON.stringify(payload, null, 2));
+      } catch (error) {
+        return failure(`Search failed: ${messageOf(error)}`);
+      }
+    };
 
   server.registerTool(
     "search_similar_incidents",
@@ -50,26 +75,13 @@ export function createIncidentsServer(options: IncidentsServerOptions): McpServe
         "Finds past Incidents whose symptoms match a description. Describe what is happening the way the " +
         `reporter did. The ${candidates} nearest by embedding are reranked and the best ${topK} come back ` +
         "with their documented root cause, resolution, and a relevance score from 0 to 1.",
-      inputSchema: { text: z.string().min(1).describe("The symptoms to match"), k },
+      inputSchema: { text: z.string().min(1).describe("The symptoms to match"), k: kSchema },
       annotations: { readOnlyHint: true },
     },
-    async ({ text: query, k: limit }) => {
-      try {
-        const ranked = await searchRanked<IncidentRecord>({
-          query,
-          embedder,
-          reranker,
-          fetchCandidates: (embedding, n) => store.nearestIncidents(embedding, n),
-          documentOf: incidentDocument,
-          candidates,
-          topK: limit,
-        });
-        const payload: IncidentSearchResult = { query, results: ranked.map(flatten) };
-        return text(JSON.stringify(payload, null, 2));
-      } catch (error) {
-        return failure(`Search failed: ${messageOf(error)}`);
-      }
-    },
+    search<IncidentRecord>(
+      (embedding, n) => store.nearestIncidents(embedding, n),
+      incidentDocument,
+    ),
   );
 
   server.registerTool(
@@ -136,35 +148,19 @@ export function createIncidentsServer(options: IncidentsServerOptions): McpServe
         "Finds Help articles that answer a Question: how-to requests and known workarounds such as clearing " +
         `the cache. The ${candidates} nearest by embedding are reranked and the best ${topK} come back with a ` +
         "relevance score from 0 to 1. A high score means the Ticket can be answered without investigation.",
-      inputSchema: { text: z.string().min(1).describe("The question or symptoms to match"), k },
+      inputSchema: {
+        text: z.string().min(1).describe("The question or symptoms to match"),
+        k: kSchema,
+      },
       annotations: { readOnlyHint: true },
     },
-    async ({ text: query, k: limit }) => {
-      try {
-        const ranked = await searchRanked<HelpArticleRecord>({
-          query,
-          embedder,
-          reranker,
-          fetchCandidates: (embedding, n) => store.nearestHelpArticles(embedding, n),
-          documentOf: helpArticleDocument,
-          candidates,
-          topK: limit,
-        });
-        const payload: HelpArticleSearchResult = { query, results: ranked.map(flatten) };
-        return text(JSON.stringify(payload, null, 2));
-      } catch (error) {
-        return failure(`Search failed: ${messageOf(error)}`);
-      }
-    },
+    search<HelpArticleRecord>(
+      (embedding, n) => store.nearestHelpArticles(embedding, n),
+      helpArticleDocument,
+    ),
   );
 
   return server;
-}
-
-function flatten<T extends object>(
-  ranked: Ranked<T>,
-): T & { similarity: number; relevanceScore: number } {
-  return { ...ranked.item, similarity: ranked.similarity, relevanceScore: ranked.relevanceScore };
 }
 
 function text(value: string): CallToolResult {

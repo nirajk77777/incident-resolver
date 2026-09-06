@@ -20,13 +20,38 @@ const incidentId = (n: number) => `30000000-0000-4000-8000-${String(n).padStart(
 const articleId = (n: number) => `40000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const ticketId = (n: number) => `20000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 
-/** The UPDATE that brings a cart's denormalised totals back in line with its lines. */
+/**
+ * The UPDATE that brings a cart's denormalised totals back in line with its lines.
+ *
+ * It recomputes the discount the way ShopLite's pricing does (zero when the code is
+ * inactive or the subtotal is under its minimum, rounded percentage or capped fixed
+ * amount otherwise), and stays a single UPDATE with a WHERE clause so mcp-database's
+ * propose_data_fix accepts it as a Proposal.
+ */
 export const cartTotalsRecomputeSql = `UPDATE shoplite.cart_totals
-SET item_count = (SELECT coalesce(sum(quantity), 0) FROM shoplite.cart_items WHERE cart_id = cart_totals.cart_id),
-    subtotal_cents = (SELECT coalesce(sum(quantity * unit_price_cents), 0) FROM shoplite.cart_items WHERE cart_id = cart_totals.cart_id),
-    total_cents = (SELECT coalesce(sum(quantity * unit_price_cents), 0) FROM shoplite.cart_items WHERE cart_id = cart_totals.cart_id) - discount_cents,
+SET item_count = s.item_count,
+    subtotal_cents = s.subtotal_cents,
+    discount_cents = s.discount_cents,
+    total_cents = s.subtotal_cents - s.discount_cents,
     updated_at = now()
-WHERE cart_id = '<cart id>';`;
+FROM (
+  SELECT l.item_count, l.subtotal_cents,
+         CASE
+           WHEN d.code IS NULL OR NOT d.active OR l.subtotal_cents < d.min_subtotal_cents THEN 0
+           WHEN d.kind = 'percent' THEN least(round(l.subtotal_cents * d.value / 100.0)::int, l.subtotal_cents)
+           ELSE least(d.value, l.subtotal_cents)
+         END AS discount_cents
+  FROM shoplite.carts c
+  LEFT JOIN shoplite.discount_codes d ON d.code = c.discount_code
+  CROSS JOIN (
+    SELECT coalesce(sum(quantity), 0)::int AS item_count,
+           coalesce(sum(quantity * unit_price_cents), 0)::int AS subtotal_cents
+    FROM shoplite.cart_items
+    WHERE cart_id = '<cart id>'
+  ) l
+  WHERE c.id = '<cart id>'
+) s
+WHERE cart_totals.cart_id = '<cart id>';`;
 
 export const seedIncidentIds = {
   /** The canonical stale cart total Incident, with the documented UPDATE. */
@@ -43,12 +68,12 @@ export const seedHelpArticleIds = {
 
 type SeedIncident = NewIncident & { id: string; createdAt: Date };
 
-const at = (iso: string) => new Date(iso);
+const dated = (iso: string) => new Date(iso);
 
 export const seedIncidents: SeedIncident[] = [
   {
     id: seedIncidentIds.staleCartTotal,
-    createdAt: at("2026-04-14T15:22:00Z"),
+    createdAt: dated("2026-04-14T15:22:00Z"),
     author: authors.priya,
     resolvedBy: "human",
     category: "data_issue",
@@ -62,21 +87,21 @@ export const seedIncidents: SeedIncident[] = [
   },
   {
     id: seedIncidentIds.staleCartTotalDuplicates[0],
-    createdAt: at("2026-06-02T09:48:00Z"),
+    createdAt: dated("2026-06-02T09:48:00Z"),
     author: authors.resolver,
     resolvedBy: "agent",
     category: "data_issue",
     sourceTicketId: ticketId(144),
     title: "Header cart badge wrong after deleting a line from the cart",
     symptoms:
-      "Customer report: after deleting the Canvas Tote from the cart, the badge in the header still said 3 items and the old total, while the cart page showed 2 items. Trace showed DELETE /customers/:customerId/cart/items/:productId returning 200 with no write to cart_totals in the span.",
+      "Customer Ticket: after deleting the Canvas Tote from the cart, the badge in the header still said 3 items and the old total, while the cart page showed 2 items. Trace showed DELETE /customers/:customerId/cart/items/:productId returning 200 with no write to cart_totals in the span.",
     rootCause:
       "The cart_totals row for the cart was stale: item_count 3 and subtotal from before the removal, updated_at older than the cart_items delete. removeItem does not refresh cart_totals; only addItem and the discount route do.",
     resolution: `Proposed and, after Reviewer approval, ran the recompute UPDATE against cart_totals for the customer's cart:\n\n${cartTotalsRecomputeSql}\n\nReplied to the customer that the badge is corrected. Same defect as the April Incident; the code fix in removeItem is still open.`,
   },
   {
     id: seedIncidentIds.staleCartTotalDuplicates[1],
-    createdAt: at("2026-08-19T18:05:00Z"),
+    createdAt: dated("2026-08-19T18:05:00Z"),
     author: authors.marcus,
     resolvedBy: "human",
     category: "data_issue",
@@ -84,12 +109,11 @@ export const seedIncidents: SeedIncident[] = [
     title: "cart_totals out of sync again after item removal",
     symptoms: "count/total in cart tag stuck after removing item. cart page fine. same as before.",
     rootCause: "removeItem still doesn't refresh cart_totals.",
-    resolution:
-      "Ran the recompute UPDATE on cart_totals for the cart (see the April write-up for the statement). Fixed. We should just ship the removeItem fix.",
+    resolution: `Ran the recompute on cart_totals for the cart, fixed:\n\n${cartTotalsRecomputeSql}\n\nWe should just ship the removeItem fix.`,
   },
   {
     id: seedIncidentIds.redHerring,
-    createdAt: at("2026-05-20T11:30:00Z"),
+    createdAt: dated("2026-05-20T11:30:00Z"),
     author: authors.marcus,
     resolvedBy: "human",
     category: "user_error",
@@ -104,7 +128,7 @@ export const seedIncidents: SeedIncident[] = [
   },
   {
     id: incidentId(5),
-    createdAt: at("2026-03-09T10:12:00Z"),
+    createdAt: dated("2026-03-09T10:12:00Z"),
     author: authors.priya,
     resolvedBy: "human",
     category: "user_error",
@@ -119,7 +143,7 @@ export const seedIncidents: SeedIncident[] = [
   },
   {
     id: incidentId(6),
-    createdAt: at("2026-03-23T14:40:00Z"),
+    createdAt: dated("2026-03-23T14:40:00Z"),
     author: authors.resolver,
     resolvedBy: "agent",
     category: "user_error",
@@ -133,7 +157,7 @@ export const seedIncidents: SeedIncident[] = [
   },
   {
     id: incidentId(7),
-    createdAt: at("2026-04-02T08:05:00Z"),
+    createdAt: dated("2026-04-02T08:05:00Z"),
     author: authors.marcus,
     resolvedBy: "human",
     category: "infra",
@@ -148,7 +172,7 @@ export const seedIncidents: SeedIncident[] = [
   },
   {
     id: incidentId(8),
-    createdAt: at("2026-04-28T16:55:00Z"),
+    createdAt: dated("2026-04-28T16:55:00Z"),
     author: authors.priya,
     resolvedBy: "human",
     category: "user_error",
@@ -162,7 +186,7 @@ export const seedIncidents: SeedIncident[] = [
   },
   {
     id: incidentId(9),
-    createdAt: at("2026-05-06T13:20:00Z"),
+    createdAt: dated("2026-05-06T13:20:00Z"),
     author: authors.resolver,
     resolvedBy: "agent",
     category: "data_issue",
@@ -177,7 +201,7 @@ export const seedIncidents: SeedIncident[] = [
   },
   {
     id: incidentId(10),
-    createdAt: at("2026-05-14T07:45:00Z"),
+    createdAt: dated("2026-05-14T07:45:00Z"),
     author: authors.marcus,
     resolvedBy: "human",
     category: "infra",
@@ -190,7 +214,7 @@ export const seedIncidents: SeedIncident[] = [
   },
   {
     id: incidentId(11),
-    createdAt: at("2026-06-11T10:10:00Z"),
+    createdAt: dated("2026-06-11T10:10:00Z"),
     author: authors.priya,
     resolvedBy: "human",
     category: "code_bug",
@@ -205,7 +229,7 @@ export const seedIncidents: SeedIncident[] = [
   },
   {
     id: incidentId(12),
-    createdAt: at("2026-06-25T15:00:00Z"),
+    createdAt: dated("2026-06-25T15:00:00Z"),
     author: authors.resolver,
     resolvedBy: "agent",
     category: "question",
@@ -218,7 +242,7 @@ export const seedIncidents: SeedIncident[] = [
   },
   {
     id: incidentId(13),
-    createdAt: at("2026-07-03T12:35:00Z"),
+    createdAt: dated("2026-07-03T12:35:00Z"),
     author: authors.marcus,
     resolvedBy: "human",
     category: "code_bug",
@@ -232,7 +256,7 @@ export const seedIncidents: SeedIncident[] = [
   },
   {
     id: incidentId(14),
-    createdAt: at("2026-07-15T09:15:00Z"),
+    createdAt: dated("2026-07-15T09:15:00Z"),
     author: authors.priya,
     resolvedBy: "human",
     category: "user_error",
@@ -246,7 +270,7 @@ export const seedIncidents: SeedIncident[] = [
   },
   {
     id: incidentId(15),
-    createdAt: at("2026-07-22T17:25:00Z"),
+    createdAt: dated("2026-07-22T17:25:00Z"),
     author: authors.resolver,
     resolvedBy: "agent",
     category: "data_issue",
@@ -261,7 +285,7 @@ export const seedIncidents: SeedIncident[] = [
   },
   {
     id: incidentId(16),
-    createdAt: at("2026-08-01T11:05:00Z"),
+    createdAt: dated("2026-08-01T11:05:00Z"),
     author: authors.marcus,
     resolvedBy: "human",
     category: "data_issue",
@@ -275,7 +299,7 @@ export const seedIncidents: SeedIncident[] = [
   },
   {
     id: incidentId(17),
-    createdAt: at("2026-08-08T14:50:00Z"),
+    createdAt: dated("2026-08-08T14:50:00Z"),
     author: authors.priya,
     resolvedBy: "human",
     category: "code_bug",
@@ -287,7 +311,7 @@ export const seedIncidents: SeedIncident[] = [
   },
   {
     id: incidentId(18),
-    createdAt: at("2026-08-26T10:30:00Z"),
+    createdAt: dated("2026-08-26T10:30:00Z"),
     author: authors.resolver,
     resolvedBy: "agent",
     category: "user_error",
@@ -301,7 +325,7 @@ export const seedIncidents: SeedIncident[] = [
   },
   {
     id: incidentId(19),
-    createdAt: at("2026-09-01T08:20:00Z"),
+    createdAt: dated("2026-09-01T08:20:00Z"),
     author: authors.marcus,
     resolvedBy: "human",
     category: "infra",
@@ -316,7 +340,7 @@ export const seedIncidents: SeedIncident[] = [
   },
   {
     id: incidentId(20),
-    createdAt: at("2026-03-30T16:10:00Z"),
+    createdAt: dated("2026-03-30T16:10:00Z"),
     author: authors.priya,
     resolvedBy: "human",
     category: "question",

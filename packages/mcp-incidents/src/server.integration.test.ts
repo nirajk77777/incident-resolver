@@ -4,10 +4,16 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createCohereProviders } from "./cohere";
+import type { Embedder } from "./retrieval";
 import { seedKnowledge } from "./seed";
 import { seedHelpArticleIds, seedIncidentIds } from "./seed-data";
-import type { HelpArticleSearchResult, IncidentSearchResult } from "./server";
-import { createKnowledgeStore, type IncidentRecord } from "./store";
+import type { SearchResult } from "./server";
+import {
+  createKnowledgeStore,
+  type HelpArticleRecord,
+  type IncidentRecord,
+  type KnowledgeStore,
+} from "./store";
 
 // Needs `docker compose up`, this repo's `pnpm db:migrate`, and COHERE_API_KEY. Run with
 // `pnpm test:integration`. Without the key the suite is skipped, since every assertion
@@ -48,28 +54,27 @@ async function call(client: Client, name: string, args: Record<string, unknown> 
 async function searchIncidents(client: Client, text: string, k?: number) {
   const reply = await call(client, "search_similar_incidents", k ? { text, k } : { text });
   expect(reply.isError, reply.text).toBe(false);
-  return JSON.parse(reply.text) as IncidentSearchResult;
+  return JSON.parse(reply.text) as SearchResult<IncidentRecord>;
 }
 
 async function searchHelp(client: Client, text: string) {
   const reply = await call(client, "search_help_articles", { text });
   expect(reply.isError, reply.text).toBe(false);
-  return JSON.parse(reply.text) as HelpArticleSearchResult;
+  return JSON.parse(reply.text) as SearchResult<HelpArticleRecord>;
 }
 
 describe.skipIf(!apiKey)("mcp-incidents over the MCP client", () => {
   const db = createDb(config.infra.databaseUrl);
+  let store: KnowledgeStore;
+  let embedder: Embedder;
   let client: Client;
   const savedIds: string[] = [];
 
   beforeAll(async () => {
     await runMigrations(db);
-    const { embedder } = createCohereProviders({
-      apiKey: apiKey as string,
-      embeddingModel: config.models.embeddings,
-      rerankModel: config.models.rerank,
-    });
-    await seedKnowledge(createKnowledgeStore(db), embedder);
+    store = createKnowledgeStore(db);
+    embedder = createCohereProviders({ apiKey: apiKey as string, models: config.models }).embedder;
+    await seedKnowledge(store, embedder);
     client = await startServer();
   });
 
@@ -96,11 +101,18 @@ describe.skipIf(!apiKey)("mcp-incidents over the MCP client", () => {
   });
 
   describe("search_similar_incidents", () => {
+    const staleCartQuery =
+      "Cart total wrong after removing item: the cart tag in the header still shows the old item count and total after I removed a product, even after a refresh";
+
+    it("has vector search rank the red herring among the nearest candidates", async () => {
+      const nearest = await store.nearestIncidents(await embedder.embedQuery(staleCartQuery), 20);
+      const rank = nearest.findIndex((c) => c.item.id === seedIncidentIds.redHerring);
+      expect(rank).toBeGreaterThanOrEqual(0);
+      expect(rank).toBeLessThan(6);
+    });
+
     it("ranks a stale cart total Incident first and the red herring below it after rerank", async () => {
-      const { results } = await searchIncidents(
-        client,
-        "Cart total wrong after removing item: the cart tag in the header still shows the old item count and total after I removed a product, even after a refresh",
-      );
+      const { results } = await searchIncidents(client, staleCartQuery);
       expect(results).toHaveLength(3);
       expect(staleCartTotalIds).toContain(results[0]?.id);
 

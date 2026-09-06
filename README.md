@@ -69,4 +69,4 @@ Its integration tests drive the tools through the MCP client and need ShopLite m
 COHERE_API_KEY=... pnpm --filter @incident-resolver/mcp-incidents start
 ```
 
-Its integration tests drive the tools through the MCP client and reseed the knowledge schema first, so they need Docker and the Cohere key; the pgvector store test needs only Docker.
+Its integration tests drive the tools through the MCP client and reseed the knowledge schema first, so they need Docker and the Cohere key. The pgvector store test needs only Docker, and the test that proves the documented cart_totals UPDATE against ShopLite's pricing rules needs ShopLite migrated and seeded.

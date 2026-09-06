@@ -17,11 +17,7 @@ if (!apiKey) {
 const db = createDb(config.infra.databaseUrl);
 try {
   await runMigrations(db);
-  const { embedder } = createCohereProviders({
-    apiKey,
-    embeddingModel: config.models.embeddings,
-    rerankModel: config.models.rerank,
-  });
+  const { embedder } = createCohereProviders({ apiKey, models: config.models });
   const result = await seedKnowledge(createKnowledgeStore(db), embedder);
   console.log(
     `Seeded ${result.incidents} Incidents and ${result.helpArticles} Help articles into the knowledge schema`,

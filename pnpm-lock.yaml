@@ -70,6 +70,9 @@ importers:
         specifier: 4.5.4
         version: 4.5.4
     devDependencies:
+      '@incident-resolver/mcp-database':
+        specifier: workspace:*
+        version: link:../mcp-database
       '@types/pg':
         specifier: 8.23.1
         version: 8.23.1

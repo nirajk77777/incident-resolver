@@ -1,3 +1,4 @@
+import { checkDataFixSql } from "@incident-resolver/mcp-database";
 import { describe, expect, it } from "vitest";
 import { incidentDocument } from "./documents";
 import {
@@ -45,10 +46,27 @@ describe("seeded Incidents", () => {
     expect(canonical?.category).toBe("data_issue");
     expect(canonical?.resolution).toContain(cartTotalsRecomputeSql);
     expect(cartTotalsRecomputeSql).toMatch(/^UPDATE shoplite\.cart_totals/);
-    expect(cartTotalsRecomputeSql).toMatch(/WHERE cart_id = /);
-    for (const column of ["item_count", "subtotal_cents", "total_cents", "updated_at"]) {
-      expect(cartTotalsRecomputeSql).toContain(column);
+    for (const column of [
+      "item_count",
+      "subtotal_cents",
+      "discount_cents",
+      "total_cents",
+      "updated_at",
+    ]) {
+      expect(cartTotalsRecomputeSql).toContain(`${column} = `);
     }
+  });
+
+  it("document a fix that mcp-database's propose_data_fix accepts for a tester Ticket", () => {
+    const sql = cartTotalsRecomputeSql.replaceAll(
+      "<cart id>",
+      "10000000-0000-4000-8000-0000000000aa",
+    );
+    expect(checkDataFixSql(sql)).toMatchObject({
+      ok: true,
+      statement: "update",
+      table: "shoplite.cart_totals",
+    });
   });
 
   it("include two near-duplicates of the stale cart total Incident and one red herring", () => {
@@ -57,7 +75,7 @@ describe("seeded Incidents", () => {
     expect(duplicates).toHaveLength(2);
     for (const duplicate of duplicates) {
       expect(duplicate?.category).toBe("data_issue");
-      expect(incidentDocument(duplicate as NonNullable<typeof duplicate>)).toMatch(/cart_totals/);
+      expect(duplicate?.resolution).toContain(cartTotalsRecomputeSql);
     }
 
     const redHerring = byId.get(seedIncidentIds.redHerring);

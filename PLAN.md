@@ -144,10 +144,9 @@ incident-resolver/                # this repo, pnpm monorepo
     agents/                       # Resolver, subagents, prompts, Zod schemas
     mcp-observability/
     mcp-database/
-    mcp-incidents/
-    shared/                       # ticket types, event types, db client
+    mcp-incidents/                # also owns scripts/seed.ts: the 20 seeded Incidents, run as `pnpm seed:incidents`
+    shared/                       # ticket types, event types, db client, migrations
   docker-compose.yml              # postgres + pgvector, grafana/otel-lgtm
-  scripts/seed-incidents.ts       # 20 seeded Incidents, see below
   scripts/demo-reset.ts           # reseed ShopLite data, clear Tickets and approvals, keep Incidents
   scripts/prompts-sync.ts         # push prompts to Langfuse
   scripts/scorecard.ts            # replay the planted bugs, check each Outcome

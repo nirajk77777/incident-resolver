@@ -1,10 +1,9 @@
-import { type DataFixProposal, redact } from "@incident-resolver/shared";
+import { type DataFixProposal, messageOf, redact } from "@incident-resolver/shared";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { Pool } from "pg";
 import { z } from "zod";
 import { describeSchema, formatSchema } from "./describe-schema";
-import { messageOf } from "./errors";
 import type { Reporter } from "./reporter";
 import { checkDataFixSql, checkReadonlySql, tenantTableList } from "./sql-guard";
 

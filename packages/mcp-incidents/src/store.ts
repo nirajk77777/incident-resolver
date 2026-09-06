@@ -1,24 +1,9 @@
-import {
-  type Db,
-  helpArticles,
-  type IncidentCategory,
-  incidents,
-} from "@incident-resolver/shared/db";
-import { cosineDistance, eq, sql } from "drizzle-orm";
+import { type Db, helpArticles, incidents } from "@incident-resolver/shared/db";
+import { cosineDistance, eq, getTableColumns, sql } from "drizzle-orm";
 import type { Candidate } from "./retrieval";
 
-export type IncidentRecord = {
-  id: string;
-  title: string;
-  symptoms: string;
-  rootCause: string;
-  resolution: string;
-  category: IncidentCategory;
-  sourceTicketId: string | null;
-  resolvedBy: "agent" | "human";
-  author: string;
-  createdAt: Date;
-};
+/** An Incident row without its embedding, which never leaves the store. */
+export type IncidentRecord = Omit<typeof incidents.$inferSelect, "embedding">;
 
 /** What `save_incident` and the seed provide; id and createdAt default in Postgres. */
 export type NewIncident = Omit<IncidentRecord, "id" | "createdAt" | "sourceTicketId"> & {
@@ -27,34 +12,13 @@ export type NewIncident = Omit<IncidentRecord, "id" | "createdAt" | "sourceTicke
   sourceTicketId?: string | null;
 };
 
-export type HelpArticleRecord = {
-  id: string;
-  title: string;
-  body: string;
-  tags: string[];
-};
+/** A Help article row without its embedding. */
+export type HelpArticleRecord = Omit<typeof helpArticles.$inferSelect, "embedding">;
 
 export type NewHelpArticle = Omit<HelpArticleRecord, "id"> & { id?: string };
 
-const incidentColumns = {
-  id: incidents.id,
-  title: incidents.title,
-  symptoms: incidents.symptoms,
-  rootCause: incidents.rootCause,
-  resolution: incidents.resolution,
-  category: incidents.category,
-  sourceTicketId: incidents.sourceTicketId,
-  resolvedBy: incidents.resolvedBy,
-  author: incidents.author,
-  createdAt: incidents.createdAt,
-};
-
-const helpArticleColumns = {
-  id: helpArticles.id,
-  title: helpArticles.title,
-  body: helpArticles.body,
-  tags: helpArticles.tags,
-};
+const { embedding: _incidentEmbedding, ...incidentColumns } = getTableColumns(incidents);
+const { embedding: _helpArticleEmbedding, ...helpArticleColumns } = getTableColumns(helpArticles);
 
 /** The `knowledge` schema: Incidents and Help articles with their pgvector embeddings. */
 export type KnowledgeStore = {

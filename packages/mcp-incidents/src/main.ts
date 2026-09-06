@@ -1,8 +1,8 @@
+import { messageOf } from "@incident-resolver/shared";
 import { getConfig } from "@incident-resolver/shared/config";
 import { createDb } from "@incident-resolver/shared/db";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createCohereProviders } from "./cohere";
-import { messageOf } from "./errors";
 import { createIncidentsServer } from "./server";
 import { createKnowledgeStore } from "./store";
 
@@ -24,11 +24,7 @@ const db = createDb(config.infra.databaseUrl);
 try {
   const server = createIncidentsServer({
     store: createKnowledgeStore(db),
-    ...createCohereProviders({
-      apiKey,
-      embeddingModel: config.models.embeddings,
-      rerankModel: config.models.rerank,
-    }),
+    ...createCohereProviders({ apiKey, models: config.models }),
     candidates: config.knowledge.searchCandidates,
     topK: config.knowledge.searchTopK,
   });
