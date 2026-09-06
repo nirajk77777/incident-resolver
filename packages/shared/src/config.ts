@@ -41,6 +41,12 @@ const configSchema = z
     // A read-only query through mcp-database returns at most this many rows.
     QUERY_ROW_CAP: count().default(200),
 
+    // A log search through mcp-observability returns at most this many lines.
+    LOG_LINE_CAP: count().default(100),
+
+    // The service.name ShopLite reports to LGTM: Loki's service_name and Prometheus's job.
+    SHOPLITE_SERVICE_NAME: z.string().min(1).default("shoplite-api"),
+
     // mcp-incidents pulls this many rows from pgvector by cosine similarity, then
     // Cohere rerank narrows them to TOP_K with relevance scores.
     KNOWLEDGE_SEARCH_CANDIDATES: count().default(20),
@@ -83,6 +89,8 @@ const configSchema = z
     runTimeoutMs: env.RUN_TIMEOUT_MS,
     dataFixRowCap: env.DATA_FIX_ROW_CAP,
     queryRowCap: env.QUERY_ROW_CAP,
+    logLineCap: env.LOG_LINE_CAP,
+    shopliteServiceName: env.SHOPLITE_SERVICE_NAME,
     knowledge: {
       searchCandidates: env.KNOWLEDGE_SEARCH_CANDIDATES,
       searchTopK: env.KNOWLEDGE_SEARCH_TOP_K,

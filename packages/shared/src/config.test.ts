@@ -25,6 +25,8 @@ describe("loadConfig", () => {
     expect(config.runTimeoutMs).toBe(600_000);
     expect(config.dataFixRowCap).toBe(100);
     expect(config.queryRowCap).toBe(200);
+    expect(config.logLineCap).toBe(100);
+    expect(config.shopliteServiceName).toBe("shoplite-api");
     expect(config.infra).toEqual({
       databaseUrl: "postgres://postgres:postgres@localhost:5432/incident_resolver",
       shopliteReadonlyDatabaseUrl:
@@ -55,6 +57,8 @@ describe("loadConfig", () => {
       RUN_TIMEOUT_MS: "1000",
       DATA_FIX_ROW_CAP: "7",
       QUERY_ROW_CAP: "9",
+      LOG_LINE_CAP: "11",
+      SHOPLITE_SERVICE_NAME: "shop",
       DATABASE_URL: "postgres://u:p@db:5432/x",
       SHOPLITE_READONLY_DATABASE_URL: "postgres://r:p@db:5432/x",
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://lgtm:4318",
@@ -84,6 +88,8 @@ describe("loadConfig", () => {
     expect(config.runTimeoutMs).toBe(1000);
     expect(config.dataFixRowCap).toBe(7);
     expect(config.queryRowCap).toBe(9);
+    expect(config.logLineCap).toBe(11);
+    expect(config.shopliteServiceName).toBe("shop");
     expect(config.infra).toEqual({
       databaseUrl: "postgres://u:p@db:5432/x",
       shopliteReadonlyDatabaseUrl: "postgres://r:p@db:5432/x",
@@ -116,6 +122,7 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ RUN_TIMEOUT_MS: "0" })).toThrow(/RUN_TIMEOUT_MS/);
     expect(() => loadConfig({ DATA_FIX_ROW_CAP: "-1" })).toThrow(/DATA_FIX_ROW_CAP/);
     expect(() => loadConfig({ QUERY_ROW_CAP: "0" })).toThrow(/QUERY_ROW_CAP/);
+    expect(() => loadConfig({ LOG_LINE_CAP: "0" })).toThrow(/LOG_LINE_CAP/);
   });
 
   it("rejects a malformed OTLP endpoint", () => {

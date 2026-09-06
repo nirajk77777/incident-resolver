@@ -77,6 +77,18 @@ importers:
         specifier: 8.23.1
         version: 8.23.1
 
+  packages/mcp-observability:
+    dependencies:
+      '@incident-resolver/shared':
+        specifier: workspace:*
+        version: link:../shared
+      '@modelcontextprotocol/sdk':
+        specifier: 1.30.0
+        version: 1.30.0(@cfworker/json-schema@4.1.1)(zod@4.5.4)
+      zod:
+        specifier: 4.5.4
+        version: 4.5.4
+
   packages/shared:
     dependencies:
       drizzle-orm:

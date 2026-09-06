@@ -23,11 +23,11 @@ Copy `.env.example` to `.env` to override any model name, threshold, or URL, and
 
 ```
 apps/            portal-api, portal-web, sentinel (added by later issues)
-packages/        shared (config, db client, migrations), mcp-database, mcp-incidents, then agents and mcp-observability
+packages/        shared (config, db client, migrations), mcp-database, mcp-incidents, mcp-observability, then agents
 infra/grafana/   dashboards provisioned into the LGTM container's Grafana
 ```
 
-Tests ending in `.integration.test.ts` need Docker; everything else runs without it. The mcp-incidents MCP client test also needs `COHERE_API_KEY` and is skipped without it.
+Tests ending in `.integration.test.ts` need Docker; everything else runs without it. The mcp-incidents MCP client test also needs `COHERE_API_KEY` and is skipped without it. The mcp-observability MCP client test also needs ShopLite running, since it generates the declined checkout it then looks for.
 
 ## ShopLite
 
@@ -70,3 +70,21 @@ COHERE_API_KEY=... pnpm --filter @incident-resolver/mcp-incidents start
 ```
 
 Its integration tests drive the tools through the MCP client and reseed the knowledge schema first, so they need Docker and the Cohere key. The pgvector store test needs only Docker, and the test that proves the documented cart_totals UPDATE against ShopLite's pricing rules needs ShopLite migrated and seeded.
+
+### mcp-observability
+
+`packages/mcp-observability` gives the agent ShopLite's telemetry in the LGTM container: `search_logs` over Loki, `get_trace` over Tempo, `query_metrics` and `get_error_rate` over Prometheus, and `list_recent_errors` across all three.
+
+- `search_logs` takes free text, a window such as `15m`, a level meaning that level and above, and an optional trace id, and builds the LogQL itself: `{service_name="shoplite-api"} |~ "(?i)text" | detected_level=~"warn|error|fatal" | trace_id="..."`. Lines come back newest first with their level, trace and span ids, and the structured fields pino attached, minus the OTel resource noise. At most `LOG_LINE_CAP` lines come back and the result says when it truncated.
+- `get_trace` fetches the OTLP trace from Tempo and reduces it to the root span, route, method, status code, every span in start order with hex ids and plain attributes, and the spans that ended in error with their exception events.
+- `query_metrics` runs any PromQL: evaluated now without a window, or as a range over the window with about thirty points per series.
+- `get_error_rate` counts one route's responses by status code over the window from the OTel HTTP histogram. `errorRate` counts every 4xx and 5xx, so a declined card (402) counts; `serverErrorRate` counts 5xx only, which is what Sentinel's threshold means.
+- `list_recent_errors` is the starting point for a Ticket without a trace id: routes that returned errors with their rates, `checkout_errors_total` by reason, and the warn-and-above lines grouped by message with trace ids to follow.
+- Every result is redacted before it leaves the server: card numbers are masked entirely, and every email except the reporter's is masked. Start it with `REPORTER_EMAIL` for a customer Ticket; leave it unset for tester and Sentinel Tickets.
+- `SHOPLITE_SERVICE_NAME` (default `shoplite-api`) is the `service_name` label in Loki and the `job` label in Prometheus.
+
+```bash
+REPORTER_EMAIL=ava.chen@example.com pnpm --filter @incident-resolver/mcp-observability start
+```
+
+Its integration tests generate one declined checkout against a running ShopLite, then drive every tool through the MCP client. ShopLite exports metrics every 60 seconds, so the Prometheus-backed assertions poll for up to two and a half minutes on a cold start.
