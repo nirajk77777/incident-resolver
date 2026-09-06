@@ -6,7 +6,7 @@ import {
   tickets,
   type Verdict,
 } from "@incident-resolver/shared";
-import { and, desc, eq, gt, max, sql } from "drizzle-orm";
+import { and, desc, eq, gt, max, ne, sql } from "drizzle-orm";
 import type { TimelineEntry } from "./timeline";
 
 /** A `portal.tickets` row. */
@@ -16,7 +16,16 @@ export type TicketRecord = typeof tickets.$inferSelect;
 export type NewTicketRow = Pick<TicketRecord, "source" | "title" | "body"> & {
   reporterEmail?: string | undefined;
   traceId?: string | undefined;
+  /** Sentinel's key for the problem. At most one open Ticket carries any one of these. */
+  fingerprint?: string | undefined;
 };
+
+/**
+ * The answer to a create: the Ticket, and whether this call is what opened it. A Sentinel
+ * detection that matches a fingerprint already open joins that Ticket rather than filing
+ * another, so `created` is what tells the caller whether a run has to be started.
+ */
+export type OpenedTicket = { ticket: TicketRecord; created: boolean };
 
 export type NewTimelineEntry = {
   ticketId: string;
@@ -33,7 +42,12 @@ export const TICKET_LIST_LIMIT = 200;
  * about storage is here, so the lifecycle rules can be read in one place.
  */
 export type PortalStore = {
-  createTicket(ticket: NewTicketRow): Promise<TicketRecord>;
+  /**
+   * Opens a Ticket, or answers with the one already open on the same fingerprint. Without a
+   * fingerprint every call opens a new Ticket: two customers describing the same fault are
+   * two Tickets, and only Sentinel claims to have identified the problem itself.
+   */
+  createTicket(ticket: NewTicketRow): Promise<OpenedTicket>;
   getTicket(id: string): Promise<TicketRecord | null>;
   listTickets(): Promise<TicketRecord[]>;
   /** The Tickets one Reporter opened, newest first, with their Replies. */
@@ -65,18 +79,42 @@ const entryColumns = {
 export function createPortalStore(db: Db): PortalStore {
   return {
     async createTicket(ticket) {
-      const [row] = await db
-        .insert(tickets)
-        .values({
-          source: ticket.source,
-          reporterEmail: ticket.reporterEmail ?? null,
-          traceId: ticket.traceId ?? null,
-          title: ticket.title,
-          body: ticket.body,
-        })
-        .returning();
-      if (!row) throw new Error("Insert returned no Ticket");
-      return row;
+      const { fingerprint } = ticket;
+      const openOnFingerprint = async () => {
+        if (!fingerprint) return null;
+        const [row] = await db
+          .select()
+          .from(tickets)
+          .where(and(eq(tickets.fingerprint, fingerprint), ne(tickets.status, "closed")))
+          .limit(1);
+        return row ?? null;
+      };
+
+      const alreadyOpen = await openOnFingerprint();
+      if (alreadyOpen) return { ticket: alreadyOpen, created: false };
+
+      try {
+        const [row] = await db
+          .insert(tickets)
+          .values({
+            source: ticket.source,
+            reporterEmail: ticket.reporterEmail ?? null,
+            traceId: ticket.traceId ?? null,
+            fingerprint: fingerprint ?? null,
+            title: ticket.title,
+            body: ticket.body,
+          })
+          .returning();
+        if (!row) throw new Error("Insert returned no Ticket");
+        return { ticket: row, created: true };
+      } catch (error) {
+        // Two detections of one spike landing together: the partial unique index refused
+        // this one, so the Ticket the other opened is the answer.
+        if (!isUniqueViolation(error)) throw error;
+        const won = await openOnFingerprint();
+        if (!won) throw error;
+        return { ticket: won, created: false };
+      }
     },
 
     async getTicket(id) {
@@ -148,4 +186,12 @@ export function createPortalStore(db: Db): PortalStore {
         .orderBy(ticketEvents.id);
     },
   };
+}
+
+/** Postgres's unique-violation code, through however many layers Drizzle wrapped the error in. */
+function isUniqueViolation(error: unknown): boolean {
+  for (let cause = error; cause instanceof Error; cause = cause.cause) {
+    if ((cause as { code?: unknown }).code === "23505") return true;
+  }
+  return false;
 }

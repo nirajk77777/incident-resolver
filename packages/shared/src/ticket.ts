@@ -12,6 +12,20 @@ const ticketFields = {
   traceId: z.string().min(1).optional(),
   title: z.string().min(1),
   body: z.string().min(1),
+  /**
+   * Sentinel's key for the problem it saw — a route and an error type — rather than for
+   * this Ticket. The portal keeps at most one open Ticket per fingerprint, so a second
+   * detection of the same spike finds the first still open instead of filing another.
+   */
+  fingerprint: z.string().min(1).optional(),
+};
+
+const hasNoStrayFingerprint = (ticket: { source: string; fingerprint?: string | undefined }) =>
+  ticket.source === "sentinel" || ticket.fingerprint === undefined;
+
+const fingerprintRule = {
+  message: "Only a Sentinel Ticket carries a fingerprint",
+  path: ["fingerprint"],
 };
 
 const hasReporterEmail = (ticket: { source: string; reporterEmail?: string | undefined }) =>
@@ -23,7 +37,10 @@ const reporterEmailRule = {
 };
 
 /** A Ticket as the portal's create endpoint takes it in, before it has an id. */
-export const newTicketSchema = z.object(ticketFields).refine(hasReporterEmail, reporterEmailRule);
+export const newTicketSchema = z
+  .object(ticketFields)
+  .refine(hasReporterEmail, reporterEmailRule)
+  .refine(hasNoStrayFingerprint, fingerprintRule);
 
 export type NewTicket = z.infer<typeof newTicketSchema>;
 
@@ -33,6 +50,7 @@ export type NewTicket = z.infer<typeof newTicketSchema>;
  */
 export const ticketSchema = z
   .object({ id: z.uuid(), ...ticketFields })
-  .refine(hasReporterEmail, reporterEmailRule);
+  .refine(hasReporterEmail, reporterEmailRule)
+  .refine(hasNoStrayFingerprint, fingerprintRule);
 
 export type Ticket = z.infer<typeof ticketSchema>;

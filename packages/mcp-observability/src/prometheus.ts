@@ -83,6 +83,23 @@ export function errorRateFrom(input: ErrorRateInput, vector: PromVector): ErrorR
   };
 }
 
+/**
+ * Error rates per route from a vector grouped by route and status code, worst first. Routes
+ * with no errors are dropped: the callers — the agent listing what has gone wrong, and
+ * Sentinel watching for a spike — both only ever ask about the ones that are failing.
+ */
+export function errorRatesByRoute(vector: PromVector, window: string): ErrorRate[] {
+  const byRoute = new Map<string, PromSample[]>();
+  for (const sample of vector) {
+    const route = sample.metric.http_route || "(unrouted)";
+    byRoute.set(route, [...(byRoute.get(route) ?? []), sample]);
+  }
+  return [...byRoute]
+    .map(([route, samples]) => errorRateFrom({ route, window }, samples))
+    .filter((rate) => rate.errors > 0)
+    .sort((a, b) => b.errorRate - a.errorRate || b.errors - a.errors);
+}
+
 function round(value: number): number {
   return Math.round(value * 10_000) / 10_000;
 }

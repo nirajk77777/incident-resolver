@@ -1,0 +1,20 @@
+{
+  "name": "@incident-resolver/sentinel",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --env-file-if-exists=../../.env --watch --import tsx src/main.ts",
+    "start": "node --env-file-if-exists=../../.env --import tsx src/main.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@incident-resolver/agents": "workspace:*",
+    "@incident-resolver/mcp-observability": "workspace:*",
+    "@incident-resolver/shared": "workspace:*",
+    "@langchain/core": "1.2.9",
+    "@langchain/langgraph": "1.4.14",
+    "@langchain/openai": "1.5.11",
+    "zod": "4.5.4"
+  }
+}

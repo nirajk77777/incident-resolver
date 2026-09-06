@@ -16,6 +16,7 @@ import {
   errorRateByRouteQuery,
   errorRateFrom,
   errorRateQuery,
+  errorRatesByRoute,
   type PrometheusClient,
   type PromSample,
 } from "./prometheus";
@@ -261,7 +262,7 @@ export function createObservabilityServer(options: ObservabilityServerOptions): 
       } as Pick<LogSearchResult, "lines" | "truncated">);
       return {
         since,
-        routes: routesWithErrors(settled("Error rates", byRoute, []), since),
+        routes: errorRatesByRoute(settled("Error rates", byRoute, []), since),
         checkoutErrorsByReason: checkoutErrorsByReason(settled("Checkout errors", byReason, [])),
         messages: groupMessages(lines.lines),
         lines: lines.lines,
@@ -308,19 +309,6 @@ async function queryMetrics(
     seriesCount: Math.min(matrix.length, seriesCap),
     truncated: matrix.length > seriesCap,
   };
-}
-
-/** Error rates per route from a vector grouped by route and status code, worst first. */
-function routesWithErrors(vector: PromSample[], window: string): ErrorRate[] {
-  const byRoute = new Map<string, PromSample[]>();
-  for (const sample of vector) {
-    const route = sample.metric.http_route || "(unrouted)";
-    byRoute.set(route, [...(byRoute.get(route) ?? []), sample]);
-  }
-  return [...byRoute]
-    .map(([route, samples]) => errorRateFrom({ route, window }, samples))
-    .filter((rate) => rate.errors > 0)
-    .sort((a, b) => b.errorRate - a.errorRate || b.errors - a.errors);
 }
 
 function checkoutErrorsByReason(vector: PromSample[]): Record<string, number> {

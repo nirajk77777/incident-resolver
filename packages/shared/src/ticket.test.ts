@@ -32,6 +32,19 @@ describe("ticketSchema", () => {
     expect(ticketSchema.safeParse({ ...noEmail, source: "sentinel" }).success).toBe(true);
   });
 
+  it("carries Sentinel's fingerprint, and refuses one on any other Source", () => {
+    const { reporterEmail: _dropped, ...noEmail } = base;
+    const fingerprint = "/customers/:customerId/checkout:http_500";
+
+    expect(ticketSchema.parse({ ...noEmail, source: "sentinel", fingerprint }).fingerprint).toBe(
+      fingerprint,
+    );
+
+    const strays = ticketSchema.safeParse({ ...base, fingerprint });
+    expect(strays.success).toBe(false);
+    expect(strays.error?.issues.map((issue) => issue.path.join("."))).toContain("fingerprint");
+  });
+
   it("rejects an unknown Source, a non-uuid id, and an empty body", () => {
     expect(ticketSchema.safeParse({ ...base, source: "email" }).success).toBe(false);
     expect(ticketSchema.safeParse({ ...base, id: "ticket-1" }).success).toBe(false);

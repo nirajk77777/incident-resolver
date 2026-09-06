@@ -17,12 +17,21 @@ describe("loadPrompt", () => {
       "data-investigator",
       "incident-historian",
       "code-rca",
+      "sentinel",
     ]);
     for (const name of promptNames) {
       const text = loadPrompt(name, { confidenceThreshold: 0.6 });
       expect(text.length).toBeGreaterThan(200);
       expect(text).not.toMatch(/\{\{\s*\w+\s*\}\}/);
     }
+  });
+
+  it("resolves only the prompts asked for, so Sentinel does not fetch the Resolver's", async () => {
+    const fetch = vi.fn<PromptFetcher>(async () => undefined);
+    const prompts = await resolvePrompts({ label: "production", names: ["sentinel"], fetch });
+
+    expect(prompts.resolved.map((prompt) => prompt.name)).toEqual(["sentinel"]);
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it("substitutes the Confidence threshold into the Resolver prompt", () => {

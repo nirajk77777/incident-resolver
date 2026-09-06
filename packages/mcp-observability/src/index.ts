@@ -1,4 +1,13 @@
-export { buildLogQuery, createLokiClient, type LogEntry, type LogLevel, logLevels } from "./loki";
+export {
+  buildLogQuery,
+  createLokiClient,
+  flattenStreams,
+  type LogEntry,
+  type LogLevel,
+  type LokiClient,
+  type LokiStream,
+  logLevels,
+} from "./loki";
 export {
   checkoutErrorsQuery,
   createPrometheusClient,
@@ -6,6 +15,9 @@ export {
   errorRateByRouteQuery,
   errorRateFrom,
   errorRateQuery,
+  errorRatesByRoute,
+  type PrometheusClient,
+  type PromVector,
 } from "./prometheus";
 export {
   createObservabilityServer,

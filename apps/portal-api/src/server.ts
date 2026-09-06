@@ -126,7 +126,10 @@ export function createPortalApi({
     if (!parsed.success) {
       return reply.code(400).send({ error: "Bad Request", message: formatIssues(parsed.error) });
     }
-    const ticket = await store.createTicket(parsed.data);
+    // A Sentinel detection that matches a fingerprint already open joins that Ticket: the
+    // same spike seen twice is one problem, and answering 200 tells Sentinel which one.
+    const { ticket, created } = await store.createTicket(parsed.data);
+    if (!created) return reply.code(200).send(ticket);
     runner.start(ticket);
     return reply.code(201).send(ticket);
   });

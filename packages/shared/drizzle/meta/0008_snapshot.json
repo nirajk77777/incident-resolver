@@ -1,0 +1,644 @@
+{
+  "id": "e1a04356-3084-44b6-81b0-4d453156d267",
+  "prevId": "4782c677-703e-4426-aaa8-a5483c370db1",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "portal.approvals": {
+      "name": "approvals",
+      "schema": "portal",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "ticket_id": {
+          "name": "ticket_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "run": {
+          "name": "run",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "action": {
+          "name": "action",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "proposal": {
+          "name": "proposal",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "preview": {
+          "name": "preview",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "decision": {
+          "name": "decision",
+          "type": "approval_decision",
+          "typeSchema": "portal",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "edited_proposal": {
+          "name": "edited_proposal",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "snapshot": {
+          "name": "snapshot",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "result": {
+          "name": "result",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "decided_at": {
+          "name": "decided_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "executed_at": {
+          "name": "executed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "approvals_ticket_id_idx": {
+          "name": "approvals_ticket_id_idx",
+          "columns": [
+            {
+              "expression": "ticket_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "approvals_ticket_id_tickets_id_fk": {
+          "name": "approvals_ticket_id_tickets_id_fk",
+          "tableFrom": "approvals",
+          "tableTo": "tickets",
+          "schemaTo": "portal",
+          "columnsFrom": [
+            "ticket_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "knowledge.help_articles": {
+      "name": "help_articles",
+      "schema": "knowledge",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "body": {
+          "name": "body",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tags": {
+          "name": "tags",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::text[]"
+        },
+        "embedding": {
+          "name": "embedding",
+          "type": "vector(1536)",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "help_articles_embedding_idx": {
+          "name": "help_articles_embedding_idx",
+          "columns": [
+            {
+              "expression": "embedding",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last",
+              "opclass": "vector_cosine_ops"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "hnsw",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "knowledge.incidents": {
+      "name": "incidents",
+      "schema": "knowledge",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "symptoms": {
+          "name": "symptoms",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "root_cause": {
+          "name": "root_cause",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "resolution": {
+          "name": "resolution",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "category": {
+          "name": "category",
+          "type": "incident_category",
+          "typeSchema": "knowledge",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "embedding": {
+          "name": "embedding",
+          "type": "vector(1536)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_ticket_id": {
+          "name": "source_ticket_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "resolved_by": {
+          "name": "resolved_by",
+          "type": "incident_resolved_by",
+          "typeSchema": "knowledge",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "author": {
+          "name": "author",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "incidents_embedding_idx": {
+          "name": "incidents_embedding_idx",
+          "columns": [
+            {
+              "expression": "embedding",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last",
+              "opclass": "vector_cosine_ops"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "hnsw",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "portal.ticket_events": {
+      "name": "ticket_events",
+      "schema": "portal",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "bigserial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "ticket_id": {
+          "name": "ticket_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "run": {
+          "name": "run",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "type": {
+          "name": "type",
+          "type": "ticket_event_type",
+          "typeSchema": "portal",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payload": {
+          "name": "payload",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "ticket_events_ticket_id_id_idx": {
+          "name": "ticket_events_ticket_id_id_idx",
+          "columns": [
+            {
+              "expression": "ticket_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "ticket_events_ticket_id_tickets_id_fk": {
+          "name": "ticket_events_ticket_id_tickets_id_fk",
+          "tableFrom": "ticket_events",
+          "tableTo": "tickets",
+          "schemaTo": "portal",
+          "columnsFrom": [
+            "ticket_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "portal.tickets": {
+      "name": "tickets",
+      "schema": "portal",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "source": {
+          "name": "source",
+          "type": "ticket_source",
+          "typeSchema": "portal",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reporter_email": {
+          "name": "reporter_email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "trace_id": {
+          "name": "trace_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "langfuse_trace_id": {
+          "name": "langfuse_trace_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "fingerprint": {
+          "name": "fingerprint",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "body": {
+          "name": "body",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "ticket_status",
+          "typeSchema": "portal",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'new'"
+        },
+        "category": {
+          "name": "category",
+          "type": "incident_category",
+          "typeSchema": "knowledge",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "confidence": {
+          "name": "confidence",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "outcome": {
+          "name": "outcome",
+          "type": "ticket_outcome",
+          "typeSchema": "portal",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reply": {
+          "name": "reply",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "root_cause": {
+          "name": "root_cause",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "closed_at": {
+          "name": "closed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "tickets_reporter_email_idx": {
+          "name": "tickets_reporter_email_idx",
+          "columns": [
+            {
+              "expression": "reporter_email",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "tickets_open_fingerprint_idx": {
+          "name": "tickets_open_fingerprint_idx",
+          "columns": [
+            {
+              "expression": "fingerprint",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"portal\".\"tickets\".\"status\" <> 'closed'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "tickets_closed_carries_outcome_and_reply": {
+          "name": "tickets_closed_carries_outcome_and_reply",
+          "value": "(\"portal\".\"tickets\".\"status\" = 'closed') = (\"portal\".\"tickets\".\"outcome\" IS NOT NULL AND \"portal\".\"tickets\".\"reply\" IS NOT NULL)"
+        },
+        "tickets_customer_has_reporter_email": {
+          "name": "tickets_customer_has_reporter_email",
+          "value": "\"portal\".\"tickets\".\"source\" <> 'customer' OR \"portal\".\"tickets\".\"reporter_email\" IS NOT NULL"
+        }
+      },
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {
+    "portal.approval_decision": {
+      "name": "approval_decision",
+      "schema": "portal",
+      "values": [
+        "approve",
+        "edit",
+        "reject"
+      ]
+    },
+    "knowledge.incident_category": {
+      "name": "incident_category",
+      "schema": "knowledge",
+      "values": [
+        "question",
+        "user_error",
+        "data_issue",
+        "code_bug",
+        "infra",
+        "unknown"
+      ]
+    },
+    "knowledge.incident_resolved_by": {
+      "name": "incident_resolved_by",
+      "schema": "knowledge",
+      "values": [
+        "agent",
+        "human"
+      ]
+    },
+    "portal.ticket_event_type": {
+      "name": "ticket_event_type",
+      "schema": "portal",
+      "values": [
+        "status",
+        "subagent_start",
+        "subagent_end",
+        "tool_call",
+        "tool_result",
+        "message",
+        "interrupt",
+        "decision",
+        "verdict"
+      ]
+    },
+    "portal.ticket_outcome": {
+      "name": "ticket_outcome",
+      "schema": "portal",
+      "values": [
+        "answered",
+        "data_fixed",
+        "fix_proposed",
+        "escalated"
+      ]
+    },
+    "portal.ticket_source": {
+      "name": "ticket_source",
+      "schema": "portal",
+      "values": [
+        "customer",
+        "tester",
+        "sentinel"
+      ]
+    },
+    "portal.ticket_status": {
+      "name": "ticket_status",
+      "schema": "portal",
+      "values": [
+        "new",
+        "triaging",
+        "investigating",
+        "awaiting_approval",
+        "acting",
+        "closed"
+      ]
+    }
+  },
+  "schemas": {
+    "knowledge": "knowledge",
+    "portal": "portal",
+    "shoplite": "shoplite"
+  },
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

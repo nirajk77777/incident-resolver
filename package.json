@@ -18,6 +18,7 @@
     "workspaces:clean": "pnpm --filter @incident-resolver/agents workspaces:clean",
     "resolve": "pnpm --filter @incident-resolver/agents resolve",
     "portal": "pnpm --filter @incident-resolver/portal-api start",
+    "sentinel": "pnpm --filter @incident-resolver/sentinel start",
     "test": "vitest run --project unit",
     "test:integration": "vitest run --project integration",
     "test:all": "vitest run",

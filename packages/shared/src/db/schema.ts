@@ -9,6 +9,7 @@ import {
   real,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
   vector,
 } from "drizzle-orm/pg-core";
@@ -152,6 +153,12 @@ export const tickets = portal.table(
      * Resolver when it starts. Rewritten by each run, so it always points at the latest.
      */
     langfuseTraceId: text("langfuse_trace_id"),
+    /**
+     * What Sentinel saw, as a route and an error type. It is Sentinel's own key for the
+     * problem rather than for this Ticket, so a second detection of the same problem finds
+     * the Ticket already open instead of filing another. Null on customer and tester Tickets.
+     */
+    fingerprint: text("fingerprint"),
     title: text("title").notNull(),
     body: text("body").notNull(),
     status: ticketStatus("status").notNull().default("new"),
@@ -173,6 +180,11 @@ export const tickets = portal.table(
       sql`${table.source} <> 'customer' OR ${table.reporterEmail} IS NOT NULL`,
     ),
     index("tickets_reporter_email_idx").on(table.reporterEmail),
+    // At most one open Ticket per fingerprint. The portal turns a second detection into the
+    // Ticket already open, and this is what makes that true even if two arrive at once.
+    uniqueIndex("tickets_open_fingerprint_idx")
+      .on(table.fingerprint)
+      .where(sql`${table.status} <> 'closed'`),
   ],
 );
 

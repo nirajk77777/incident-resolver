@@ -16,6 +16,7 @@ export const promptNames = [
   "data-investigator",
   "incident-historian",
   "code-rca",
+  "sentinel",
 ] as const;
 export type PromptName = (typeof promptNames)[number];
 
@@ -76,6 +77,11 @@ export type PromptFetcher = (
 
 export type ResolvePromptsOptions = {
   label: string;
+  /**
+   * Which prompts to resolve. Defaults to all of them, which is what a Resolver run wants;
+   * Sentinel runs on its own and asks only for its own.
+   */
+  names?: readonly PromptName[] | undefined;
   variables?: PromptVariables;
   /** Omitted when Langfuse is not configured: every prompt then comes from its file. */
   fetch?: PromptFetcher | undefined;
@@ -89,9 +95,9 @@ export type ResolvePromptsOptions = {
  * is unreachable, or returns a template this build cannot fill.
  */
 export async function resolvePrompts(options: ResolvePromptsOptions): Promise<Prompts> {
-  const { label, variables = {}, fetch, onFallback } = options;
+  const { label, names = promptNames, variables = {}, fetch, onFallback } = options;
   const resolved = await Promise.all(
-    promptNames.map((name) => resolveOne(name, label, variables, fetch, onFallback)),
+    names.map((name) => resolveOne(name, label, variables, fetch, onFallback)),
   );
   const byName = new Map(resolved.map((prompt) => [prompt.name, prompt]));
   return {

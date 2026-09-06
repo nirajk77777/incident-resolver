@@ -41,6 +41,8 @@ const configSchema = z
     RESOLVER: z.enum(["fake", "real"]).default("fake"),
     PORTAL_API_PORT: count().default(5000),
     PORTAL_API_HOST: z.string().min(1).default("127.0.0.1"),
+    // Where the portal is reached from outside it: Sentinel opens its Tickets here.
+    PORTAL_API_URL: z.url().default("http://127.0.0.1:5000"),
     // Pause between the fake Resolver's events, so its timeline arrives one card at a time.
     FAKE_RESOLVER_STEP_DELAY_MS: z.coerce.number().int().min(0).default(400),
 
@@ -55,6 +57,8 @@ const configSchema = z
 
     // The service.name ShopLite reports to LGTM: Loki's service_name and Prometheus's job.
     SHOPLITE_SERVICE_NAME: z.string().min(1).default("shoplite-api"),
+    // Where ShopLite itself is: the portal's Demo panel forwards "simulate traffic" here.
+    SHOPLITE_API_URL: z.url().default("http://localhost:4000"),
 
     // The Workspace: the ShopLite repository Code RCA works in a per-Ticket clone of
     // (ADR-0001), where those clones live, and how long any one command in one may take —
@@ -119,12 +123,14 @@ const configSchema = z
       resolver: env.RESOLVER,
       port: env.PORTAL_API_PORT,
       host: env.PORTAL_API_HOST,
+      url: env.PORTAL_API_URL,
       fakeResolverStepDelayMs: env.FAKE_RESOLVER_STEP_DELAY_MS,
     },
     dataFixRowCap: env.DATA_FIX_ROW_CAP,
     queryRowCap: env.QUERY_ROW_CAP,
     logLineCap: env.LOG_LINE_CAP,
     shopliteServiceName: env.SHOPLITE_SERVICE_NAME,
+    shopliteApiUrl: env.SHOPLITE_API_URL,
     workspace: {
       repoUrl: env.SHOPLITE_REPO_URL,
       dir: env.WORKSPACES_DIR,

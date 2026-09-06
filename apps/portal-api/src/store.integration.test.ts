@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { createDb, type Db, loadConfig, tickets } from "@incident-resolver/shared";
 import { inArray } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -15,7 +16,7 @@ const tester = { source: "tester" as const, title: "Cart total wrong", body: "Ba
 
 /** A Ticket that will be cleaned up with the rest. */
 async function openTicket() {
-  const ticket = await store.createTicket(tester);
+  const { ticket } = await store.createTicket(tester);
   opened.push(ticket.id);
   return ticket;
 }
@@ -31,6 +32,48 @@ afterAll(async () => {
 });
 
 describe("the portal store", () => {
+  it("keeps at most one open Ticket per Sentinel fingerprint", async () => {
+    const fingerprint = `/customers/:customerId/checkout:http_500:${randomUUID()}`;
+    const detection = {
+      source: "sentinel" as const,
+      title: "Checkout is failing",
+      body: "Half of the requests are 500s",
+      fingerprint,
+    };
+
+    const first = await store.createTicket(detection);
+    opened.push(first.ticket.id);
+    expect(first.created).toBe(true);
+    expect(first.ticket.fingerprint).toBe(fingerprint);
+
+    // The same spike, seen again on the next poll: the Ticket already open, not another one.
+    const second = await store.createTicket({ ...detection, title: "Checkout is still failing" });
+    expect(second.created).toBe(false);
+    expect(second.ticket.id).toBe(first.ticket.id);
+    expect(second.ticket.title).toBe("Checkout is failing");
+
+    // Two detections landing at once: the partial unique index refuses the second insert,
+    // and the store answers with the Ticket that won rather than throwing.
+    const together = await Promise.all([
+      store.createTicket({ ...detection, fingerprint: `${fingerprint}:race` }),
+      store.createTicket({ ...detection, fingerprint: `${fingerprint}:race` }),
+    ]);
+    for (const result of together) opened.push(result.ticket.id);
+    expect(new Set(together.map((result) => result.ticket.id)).size).toBe(1);
+    expect(together.filter((result) => result.created)).toHaveLength(1);
+
+    // Once the Ticket is closed the problem may be filed again, which is what should happen
+    // if the same route starts failing next week.
+    await store.closeTicket(first.ticket.id, {
+      ...FAKE_VERDICT,
+      outcome: "escalated",
+    });
+    const afterClose = await store.createTicket(detection);
+    opened.push(afterClose.ticket.id);
+    expect(afterClose.created).toBe(true);
+    expect(afterClose.ticket.id).not.toBe(first.ticket.id);
+  });
+
   it("numbers a Ticket's first run 1 and every re-run after it", async () => {
     const ticket = await openTicket();
     expect(await store.nextRun(ticket.id)).toBe(1);

@@ -198,6 +198,43 @@ describe("creating a Ticket", () => {
     expect(created.body).toMatchObject({ source: "tester", reporterEmail: null });
   });
 
+  it("joins a Sentinel detection to the Ticket already open on its fingerprint", async () => {
+    const detection = {
+      source: "sentinel" as const,
+      title: "Checkout is failing for everyone",
+      body: "97% of POST /customers/:customerId/checkout returned 500 over the last minute",
+      fingerprint: `/customers/:customerId/checkout:http_500:${randomUUID()}`,
+    };
+
+    const first = await post<TicketBody>("/tickets", detection);
+    expect(first.status).toBe(201);
+    expect(first.body.fingerprint).toBe(detection.fingerprint);
+
+    // The next poll sees the same spike. One problem, one Ticket, and a 200 rather than a
+    // 201 so Sentinel can tell that it joined instead of opening.
+    const again = await post<TicketBody>("/tickets", { ...detection, title: "Still failing" });
+    expect(again.status).toBe(200);
+    expect(again.body.id).toBe(first.body.id);
+
+    const listed = await get<{ tickets: TicketBody[] }>("/tickets");
+    const matching = listed.body.tickets.filter(
+      (ticket) => ticket.fingerprint === detection.fingerprint,
+    );
+    expect(matching).toHaveLength(1);
+  });
+
+  it("refuses a fingerprint on a Ticket that is not Sentinel's", async () => {
+    const refused = await post<ErrorBody>("/tickets", {
+      source: "tester",
+      title: "Cart total wrong",
+      body: "Removing an item leaves the badge stale",
+      fingerprint: "/cart:http_500",
+    });
+
+    expect(refused.status).toBe(400);
+    expect(refused.body.message).toContain("fingerprint");
+  });
+
   it("serves the Ticket back by id, and lists it with the newest Tickets first", async () => {
     const created = await post<TicketBody>("/tickets", {
       source: "sentinel",
