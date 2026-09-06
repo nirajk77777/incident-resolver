@@ -1,0 +1,23 @@
+{
+  "name": "@incident-resolver/mcp-database",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@incident-resolver/shared": "workspace:*",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "pg": "8.23.0",
+    "pgsql-ast-parser": "12.0.2",
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@types/pg": "8.23.1"
+  }
+}

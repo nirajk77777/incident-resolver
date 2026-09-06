@@ -15,6 +15,13 @@
       "when": 1788632511865,
       "tag": "0001_pgvector",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788687696000,
+      "tag": "0002_shoplite_reader",
+      "breakpoints": true
     }
   ]
 }

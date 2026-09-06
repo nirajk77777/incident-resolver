@@ -38,11 +38,19 @@ const configSchema = z
     // An approved data fix that would touch more rows than this is refused.
     DATA_FIX_ROW_CAP: count().default(100),
 
+    // A read-only query through mcp-database returns at most this many rows.
+    QUERY_ROW_CAP: count().default(200),
+
     // Infrastructure from docker-compose.yml.
     DATABASE_URL: z
       .string()
       .min(1)
       .default("postgres://postgres:postgres@localhost:5432/incident_resolver"),
+    // The SELECT-only role mcp-database connects as, created by migration 0002.
+    SHOPLITE_READONLY_DATABASE_URL: z
+      .string()
+      .min(1)
+      .default("postgres://shoplite_reader:shoplite_reader@localhost:5432/incident_resolver"),
     OTEL_EXPORTER_OTLP_ENDPOINT: z.url().default("http://localhost:4318"),
     LOKI_URL: z.url().default("http://localhost:3100"),
     TEMPO_URL: z.url().default("http://localhost:3200"),
@@ -69,8 +77,10 @@ const configSchema = z
     },
     runTimeoutMs: env.RUN_TIMEOUT_MS,
     dataFixRowCap: env.DATA_FIX_ROW_CAP,
+    queryRowCap: env.QUERY_ROW_CAP,
     infra: {
       databaseUrl: env.DATABASE_URL,
+      shopliteReadonlyDatabaseUrl: env.SHOPLITE_READONLY_DATABASE_URL,
       otlpEndpoint: env.OTEL_EXPORTER_OTLP_ENDPOINT,
       lokiUrl: env.LOKI_URL,
       tempoUrl: env.TEMPO_URL,

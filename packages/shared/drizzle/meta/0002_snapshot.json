@@ -1,0 +1,22 @@
+{
+  "id": "2dc95c03-057f-4636-95f4-b427a6514cde",
+  "prevId": "86ce85b6-f2c6-492d-bbdc-3abd79e02861",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {},
+  "enums": {},
+  "schemas": {
+    "knowledge": "knowledge",
+    "portal": "portal",
+    "shoplite": "shoplite"
+  },
+  "views": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

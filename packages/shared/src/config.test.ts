@@ -24,8 +24,11 @@ describe("loadConfig", () => {
     });
     expect(config.runTimeoutMs).toBe(600_000);
     expect(config.dataFixRowCap).toBe(100);
+    expect(config.queryRowCap).toBe(200);
     expect(config.infra).toEqual({
       databaseUrl: "postgres://postgres:postgres@localhost:5432/incident_resolver",
+      shopliteReadonlyDatabaseUrl:
+        "postgres://shoplite_reader:shoplite_reader@localhost:5432/incident_resolver",
       otlpEndpoint: "http://localhost:4318",
       lokiUrl: "http://localhost:3100",
       tempoUrl: "http://localhost:3200",
@@ -51,7 +54,9 @@ describe("loadConfig", () => {
       SENTINEL_POLL_INTERVAL_MS: "5000",
       RUN_TIMEOUT_MS: "1000",
       DATA_FIX_ROW_CAP: "7",
+      QUERY_ROW_CAP: "9",
       DATABASE_URL: "postgres://u:p@db:5432/x",
+      SHOPLITE_READONLY_DATABASE_URL: "postgres://r:p@db:5432/x",
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://lgtm:4318",
       LOKI_URL: "http://lgtm:3100",
       TEMPO_URL: "http://lgtm:3200",
@@ -78,8 +83,10 @@ describe("loadConfig", () => {
     });
     expect(config.runTimeoutMs).toBe(1000);
     expect(config.dataFixRowCap).toBe(7);
+    expect(config.queryRowCap).toBe(9);
     expect(config.infra).toEqual({
       databaseUrl: "postgres://u:p@db:5432/x",
+      shopliteReadonlyDatabaseUrl: "postgres://r:p@db:5432/x",
       otlpEndpoint: "http://lgtm:4318",
       lokiUrl: "http://lgtm:3100",
       tempoUrl: "http://lgtm:3200",
@@ -108,6 +115,7 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ SENTINEL_MIN_REQUESTS: "2.5" })).toThrow(/SENTINEL_MIN_REQUESTS/);
     expect(() => loadConfig({ RUN_TIMEOUT_MS: "0" })).toThrow(/RUN_TIMEOUT_MS/);
     expect(() => loadConfig({ DATA_FIX_ROW_CAP: "-1" })).toThrow(/DATA_FIX_ROW_CAP/);
+    expect(() => loadConfig({ QUERY_ROW_CAP: "0" })).toThrow(/QUERY_ROW_CAP/);
   });
 
   it("rejects a malformed OTLP endpoint", () => {
