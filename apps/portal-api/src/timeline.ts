@@ -1,5 +1,5 @@
 import type { TicketEventType } from "@incident-resolver/shared";
-import type { ResolverEvent } from "./resolver";
+import type { TimelineResolverEvent } from "./resolver";
 
 /** A `portal.ticket_events` row as the timeline serves it. */
 export type TimelineEntry = {
@@ -13,7 +13,7 @@ export type TimelineEntry = {
 };
 
 /** The timeline entry one Resolver event becomes: the type it is filed under, and its payload. */
-export function timelineEntryFor(event: ResolverEvent): {
+export function timelineEntryFor(event: TimelineResolverEvent): {
   type: TicketEventType;
   payload: Record<string, unknown>;
 } {

@@ -1,7 +1,8 @@
 import { type Config, type Ticket, type Verdict, verdictSchema } from "@incident-resolver/shared";
 import type { Callbacks } from "@langchain/core/callbacks/manager";
-import { HumanMessage } from "@langchain/core/messages";
+import { type BaseMessage, HumanMessage } from "@langchain/core/messages";
 import type { StructuredTool } from "@langchain/core/tools";
+import type { StreamEvent } from "@langchain/core/tracers/log_stream";
 import type { BaseCheckpointSaver } from "@langchain/langgraph";
 import { createDeepAgent } from "deepagents";
 import { toolStrategy } from "langchain";
@@ -111,21 +112,65 @@ export type ResolveOptions = {
   config: Config;
   prompts: Prompts;
   callbacks?: Callbacks;
+  /** Abandons the run. Defaults to the run timeout from config, which is what the CLI wants. */
+  signal?: AbortSignal;
 };
+
+/** What the graph leaves behind: the run's messages, and the Verdict in its response format. */
+type FinalState = { messages: BaseMessage[]; structuredResponse?: unknown };
+
+const agentInput = (ticket: Ticket) => ({ messages: [new HumanMessage(renderTicket(ticket))] });
+
+const runConfig = ({ threadId, config, callbacks, signal }: ResolveOptions) => ({
+  configurable: { thread_id: threadId },
+  callbacks,
+  recursionLimit: RECURSION_LIMIT,
+  signal: signal ?? AbortSignal.timeout(config.runTimeoutMs),
+});
 
 /** Runs the Resolver on one Ticket and reports its Verdict with what the run did. */
 export async function resolveTicket(options: ResolveOptions): Promise<RunReport> {
-  const { resolver, ticket, threadId, config, prompts, callbacks } = options;
-  const result = await resolver.invoke(
-    { messages: [new HumanMessage(renderTicket(ticket))] },
-    {
-      configurable: { thread_id: threadId },
-      callbacks,
-      recursionLimit: RECURSION_LIMIT,
-      signal: AbortSignal.timeout(config.runTimeoutMs),
-    },
+  return reportFor(
+    await options.resolver.invoke(agentInput(options.ticket), runConfig(options)),
+    options,
   );
+}
 
+export type StreamTicketOptions = ResolveOptions & {
+  /**
+   * Every LangChain event the run produces, as it happens, nested subagent runs included.
+   * This is what the portal turns into timeline entries.
+   */
+  onEvent: (event: StreamEvent) => void;
+};
+
+/**
+ * The same run as `resolveTicket`, reported as it goes rather than only at the end. The
+ * final state arrives as the `on_chain_end` of the outermost run, which is the run every
+ * other event descends from, so the Verdict is read from the stream itself.
+ */
+export async function streamTicket(options: StreamTicketOptions): Promise<RunReport> {
+  const { resolver, ticket, onEvent } = options;
+  const stream = resolver.streamEvents(agentInput(ticket), {
+    ...runConfig(options),
+    version: "v2",
+  });
+  let rootRunId: string | undefined;
+  let finalState: FinalState | undefined;
+  for await (const event of stream) {
+    rootRunId ??= event.run_id;
+    if (event.event === "on_chain_end" && event.run_id === rootRunId) {
+      finalState = event.data.output as FinalState;
+    }
+    onEvent(event);
+  }
+  if (!finalState) throw new Error("The Resolver stream ended without a final state");
+  return reportFor(finalState, options);
+}
+
+/** What one finished run produced, read back off its final state. */
+function reportFor(result: FinalState, options: ResolveOptions): RunReport {
+  const { ticket, threadId, config, prompts } = options;
   const parsed = verdictSchema.safeParse(result.structuredResponse);
   if (!parsed.success) {
     throw new Error(`The Resolver did not end with a Verdict: ${parsed.error.message}`);

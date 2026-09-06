@@ -54,9 +54,20 @@ export function createPortalApi({
   app.addHook("onClose", async () => {
     for (const close of [...openStreams]) close();
     await runner.stop();
+    await resolver.close?.();
   });
 
   app.get("/health", async () => ({ status: "ok", resolver: resolver.name }));
+
+  /**
+   * What portal-web needs from the portal's own configuration: the two observability tools
+   * a Ticket links out to. Serving them keeps the web app free of a build-time environment.
+   */
+  app.get("/config", async () => ({
+    resolver: resolver.name,
+    grafanaUrl: config.infra.grafanaUrl,
+    langfuseBaseUrl: config.infra.langfuseBaseUrl,
+  }));
 
   app.post("/tickets", async (request, reply) => {
     const parsed = newTicketSchema.safeParse(request.body);

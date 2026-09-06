@@ -3,7 +3,7 @@ import { createDb, type Db, loadConfig, tickets } from "@incident-resolver/share
 import { inArray } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createFakeResolver } from "./fake-resolver";
+import { createFakeResolver, FAKE_VERDICT } from "./fake-resolver";
 import type { ResolverEvent, TicketResolver } from "./resolver";
 import { createPortalApi } from "./server";
 import type { TicketRecord } from "./store";
@@ -324,6 +324,53 @@ describe("what a Reporter can read", () => {
   it("refuses an address that is not an email", async () => {
     const read = await get<ErrorBody>("/reporters/not-an-email/tickets");
     expect(read.status).toBe(400);
+  });
+});
+
+describe("what portal-web reads off the portal", () => {
+  it("serves the Resolver in use and the two tools a Ticket links out to", async () => {
+    const served = await get<{ resolver: string; grafanaUrl: string; langfuseBaseUrl: string }>(
+      "/config",
+    );
+
+    expect(served.status).toBe(200);
+    expect(served.body).toEqual({
+      resolver: "fake",
+      grafanaUrl: config.infra.grafanaUrl,
+      langfuseBaseUrl: config.infra.langfuseBaseUrl,
+    });
+  });
+});
+
+describe("a run that reports its trace", () => {
+  const traceId = "9f8e7d6c5b4a39281706f5e4d3c2b1a0";
+
+  /** Reports the Langfuse trace it is writing to before it does any work, as the agent does. */
+  const tracingResolver: TicketResolver = {
+    name: "tracing",
+    async *resolve(): AsyncIterable<ResolverEvent> {
+      yield { type: "trace", langfuseTraceId: traceId };
+      yield { type: "verdict", verdict: FAKE_VERDICT };
+    },
+  };
+
+  it("puts the trace on the Ticket and leaves the timeline to what the run did", async () => {
+    const [portal, portalUrl] = await startApi(tracingResolver);
+    try {
+      const created = await post<TicketBody>(`${portalUrl}/tickets`, {
+        source: "tester",
+        title: "Cart total wrong",
+        body: "Stale badge",
+      });
+
+      const frames = await streamUntil(`${portalUrl}/tickets/${created.body.id}/events`, isClosed);
+      expect(frames.map((frame) => frame.data.type)).toEqual(["verdict", "status"]);
+
+      const closed = await get<TicketBody>(`${portalUrl}/tickets/${created.body.id}`);
+      expect(closed.body.langfuseTraceId).toBe(traceId);
+    } finally {
+      await portal.close();
+    }
   });
 });
 

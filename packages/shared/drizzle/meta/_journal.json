@@ -36,6 +36,13 @@
       "when": 1788709134853,
       "tag": "0004_portal",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1788713862106,
+      "tag": "0005_langfuse_trace",
+      "breakpoints": true
     }
   ]
 }

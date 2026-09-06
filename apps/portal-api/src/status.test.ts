@@ -1,6 +1,6 @@
 import type { Verdict } from "@incident-resolver/shared";
 import { describe, expect, it } from "vitest";
-import type { ResolverEvent } from "./resolver";
+import type { TimelineResolverEvent } from "./resolver";
 import { nextStatus } from "./status";
 
 const verdict = {
@@ -24,7 +24,7 @@ describe("nextStatus", () => {
   });
 
   it("stays where it is for events that are not lifecycle moves", () => {
-    const passive: ResolverEvent[] = [
+    const passive: TimelineResolverEvent[] = [
       { type: "tool_call", name: "run_readonly_sql", args: { sql: "SELECT 1" } },
       { type: "tool_result", name: "run_readonly_sql", result: { rows: [] } },
       { type: "message", text: "Checking the cart totals" },

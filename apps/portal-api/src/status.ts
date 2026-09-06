@@ -1,5 +1,5 @@
 import type { TicketStatus } from "@incident-resolver/shared";
-import type { ResolverEvent } from "./resolver";
+import type { TimelineResolverEvent } from "./resolver";
 
 /**
  * The subagent whose start means Triage, matching `TRIAGE` in `@incident-resolver/agents`.
@@ -14,7 +14,7 @@ export const TRIAGE_SUBAGENT = "triage";
  * an interrupt is the run carrying out an approved Proposal, so it counts as acting
  * whatever subagent does it.
  */
-export function nextStatus(current: TicketStatus, event: ResolverEvent): TicketStatus {
+export function nextStatus(current: TicketStatus, event: TimelineResolverEvent): TicketStatus {
   if (event.type === "verdict") return "closed";
   if (event.type === "interrupt") return "awaiting_approval";
   if (current === "awaiting_approval" || current === "acting") return "acting";

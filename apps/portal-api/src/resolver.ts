@@ -1,4 +1,5 @@
 import type { Config, Ticket, Verdict } from "@incident-resolver/shared";
+import { createAgentResolver, type NodeEnv } from "./agent-resolver";
 import { createFakeResolver } from "./fake-resolver";
 
 /**
@@ -15,7 +16,15 @@ export type ResolverEvent =
   | { type: "message"; text: string }
   /** A Proposal the run cannot carry out on its own: it waits here for a Decision. */
   | { type: "interrupt"; action: string; proposal: unknown }
+  /**
+   * The Langfuse trace this run is writing to. Not a timeline entry: it goes on the Ticket,
+   * so the portal can link to the trace of whichever run is the latest.
+   */
+  | { type: "trace"; langfuseTraceId: string }
   | { type: "verdict"; verdict: Verdict };
+
+/** Everything the Resolver reports that the timeline records. */
+export type TimelineResolverEvent = Exclude<ResolverEvent, { type: "trace" }>;
 
 export type ResolverRun = {
   ticket: Ticket;
@@ -33,17 +42,44 @@ export type ResolverRun = {
 export type TicketResolver = {
   name: string;
   resolve(run: ResolverRun): AsyncIterable<ResolverEvent>;
+  /** Releases whatever the Resolver holds open between runs. Called when the portal closes. */
+  close?(): Promise<void>;
 };
 
 /**
- * Which Resolver the portal runs Tickets through, from `RESOLVER` in the environment. The
- * real one plugs into this same seam when the agent package joins the portal.
+ * Which Resolver the portal runs Tickets through, from `RESOLVER` in the environment: the
+ * agent from `@incident-resolver/agents`, or the scripted stand-in that needs no model.
+ * Both reach the portal through the seam above, so nothing downstream can tell them apart.
  */
-export function resolverFor(config: Config): TicketResolver {
+export type ResolverForOptions = {
+  /** Passed to the MCP servers the real Resolver spawns, and read for the API keys. */
+  env?: NodeEnv;
+  /** Where the real Resolver reports what a run did, for whoever runs the portal. */
+  log?: (line: string) => void;
+};
+
+export function resolverFor(
+  config: Config,
+  { env = process.env, log }: ResolverForOptions = {},
+): TicketResolver {
   if (config.portal.resolver === "fake") {
     return createFakeResolver({ stepDelayMs: config.portal.fakeResolverStepDelayMs });
   }
-  throw new Error(
-    "The real Resolver is not wired into the portal yet: set RESOLVER=fake to run the scripted one",
-  );
+  const openAiApiKey = env.OPENAI_API_KEY;
+  if (!openAiApiKey) {
+    throw new Error(
+      "OPENAI_API_KEY is not set; the Resolver calls OpenAI models. Set RESOLVER=fake to run the scripted one",
+    );
+  }
+  return createAgentResolver({
+    config,
+    openAiApiKey,
+    langfuse: {
+      publicKey: env.LANGFUSE_PUBLIC_KEY,
+      secretKey: env.LANGFUSE_SECRET_KEY,
+      baseUrl: config.infra.langfuseBaseUrl,
+    },
+    env,
+    log,
+  });
 }

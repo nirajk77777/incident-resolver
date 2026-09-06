@@ -74,6 +74,12 @@ export function createTicketRunner({
     status: TicketStatus,
     event: ResolverEvent,
   ): Promise<TicketStatus> {
+    // The trace the run writes to belongs on the Ticket, not on its timeline: it is where
+    // the Reviewer goes to read the run, not something the run did.
+    if (event.type === "trace") {
+      await store.setLangfuseTrace(ticket.id, event.langfuseTraceId);
+      return status;
+    }
     await record(ticket.id, run, timelineEntryFor(event));
     const next = nextStatus(status, event);
     if (next === status) return status;

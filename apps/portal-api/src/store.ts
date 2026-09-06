@@ -39,6 +39,8 @@ export type PortalStore = {
   /** The Tickets one Reporter opened, newest first, with their Replies. */
   ticketsForReporter(email: string): Promise<TicketRecord[]>;
   setStatus(id: string, status: TicketStatus): Promise<void>;
+  /** Points the Ticket at the Langfuse trace of the run investigating it now. */
+  setLangfuseTrace(id: string, langfuseTraceId: string): Promise<void>;
   /** Closes a Ticket on its Verdict: exactly one Outcome and one Reply, and a closed time. */
   closeTicket(id: string, verdict: Verdict): Promise<TicketRecord>;
   /**
@@ -97,6 +99,10 @@ export function createPortalStore(db: Db): PortalStore {
 
     async setStatus(id, status) {
       await db.update(tickets).set({ status }).where(eq(tickets.id, id));
+    },
+
+    async setLangfuseTrace(id, langfuseTraceId) {
+      await db.update(tickets).set({ langfuseTraceId }).where(eq(tickets.id, id));
     },
 
     async closeTicket(id, verdict) {

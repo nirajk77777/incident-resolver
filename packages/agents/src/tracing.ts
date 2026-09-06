@@ -1,4 +1,4 @@
-import type { Config, IncidentCategory, Ticket } from "@incident-resolver/shared";
+import type { Config, IncidentCategory, Ticket, Verdict } from "@incident-resolver/shared";
 import type { Callbacks } from "@langchain/core/callbacks/manager";
 import { CallbackHandler } from "@langfuse/langchain";
 import { LangfuseSpanProcessor } from "@langfuse/otel";
@@ -10,7 +10,6 @@ import {
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import type { LangfuseCredentials } from "./langfuse-prompts";
 import { type Prompts, promptVersions } from "./prompts";
-import type { RunReport } from "./resolver";
 
 /**
  * Langfuse v5 rides on OpenTelemetry: a LangfuseSpanProcessor in the Node SDK exports every
@@ -54,6 +53,11 @@ export type TraceRunOptions = {
   models: ModelNames;
   /** Recorded on the trace so a run can be read against the prompt version that produced it. */
   prompts: Prompts;
+  /**
+   * The trace this run writes to, as soon as it is open, so a caller can link to it while the
+   * run is still going. Empty when tracing is off, since there is then no trace to link to.
+   */
+  onTrace?: (traceId: string) => void;
 };
 
 /**
@@ -63,10 +67,10 @@ export type TraceRunOptions = {
  * the Category is written onto the root span once the Verdict is in, since trace tags are read
  * from any span.
  */
-export function traceRun(
-  { ticket, models, prompts }: TraceRunOptions,
-  run: (callbacks: Callbacks) => Promise<RunReport>,
-): Promise<RunReport> {
+export function traceRun<T extends { verdict: Verdict }>(
+  { ticket, models, prompts, onTrace }: TraceRunOptions,
+  run: (callbacks: Callbacks) => Promise<T>,
+): Promise<T> {
   const sessionId = ticket.id;
   const tags = traceTags(ticket, models);
   // Flat: Langfuse trace metadata is string-valued, so each prompt gets its own key.
@@ -90,6 +94,10 @@ export function traceRun(
       "resolve-ticket",
       async (span) => {
         span.update({ input: ticket });
+        // Langfuse v5 rides on OTel, so the trace id is the root span's: a run can be linked
+        // to from the portal the moment it starts. A span that was never recorded has none.
+        const { traceId } = span.otelSpan.spanContext();
+        if (onTrace && traceId && !/^0+$/.test(traceId)) onTrace(traceId);
         const handler = new CallbackHandler({ sessionId, tags, traceMetadata: metadata });
         const report = await run([handler]);
         span.update({ output: report.verdict });

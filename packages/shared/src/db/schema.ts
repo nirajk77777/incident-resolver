@@ -147,6 +147,11 @@ export const tickets = portal.table(
     reporterEmail: text("reporter_email"),
     /** The ShopLite trace id from the storefront's error toast, when the Reporter had one. */
     traceId: text("trace_id"),
+    /**
+     * The Langfuse trace of the run that is investigating this Ticket, reported by the
+     * Resolver when it starts. Rewritten by each run, so it always points at the latest.
+     */
+    langfuseTraceId: text("langfuse_trace_id"),
     title: text("title").notNull(),
     body: text("body").notNull(),
     status: ticketStatus("status").notNull().default("new"),

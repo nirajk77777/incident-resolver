@@ -40,6 +40,8 @@ export {
   type RunReport,
   renderTicket,
   resolveTicket,
+  type StreamTicketOptions,
+  streamTicket,
 } from "./resolver";
 export { type RunSummary, summarizeRun } from "./run-summary";
 export {

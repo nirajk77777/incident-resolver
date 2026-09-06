@@ -23,7 +23,7 @@ Copy `.env.example` to `.env` to override any model name, threshold, or URL, and
 ## Layout
 
 ```
-apps/            portal-api (Tickets, timeline, SSE), portal-web and sentinel (added by later issues)
+apps/            portal-api (Tickets, timeline, SSE), portal-web (the Reviewer's portal), sentinel (added by a later issue)
 packages/        shared (config, db client, migrations), mcp-database, mcp-incidents, mcp-observability, agents (Resolver, subagents, prompts, CLI)
 infra/grafana/   dashboards provisioned into the LGTM container's Grafana
 ```
@@ -47,13 +47,35 @@ ShopLite sends traces, logs, and metrics to the LGTM container. The **ShopLite**
 | `GET /tickets/:id` | One Ticket with its status, Category, Confidence, Outcome, Reply, and root cause. |
 | `GET /tickets/:id/events` | The live timeline as SSE. |
 | `GET /reporters/:email/tickets` | What the storefront's "My tickets" page reads: one Reporter's Tickets and Replies. |
+| `GET /config` | What portal-web needs from the portal's configuration: the Resolver in use, and the Grafana and Langfuse base URLs its trace links are built from. |
 | `GET /health` | Liveness, and which Resolver is selected. |
 
 A Ticket moves `new` → `triaging` → `investigating` → `awaiting_approval` → `acting` → `closed`, and `closed` always carries exactly one Outcome and one Reply, which a check constraint on the table enforces. The lifecycle is derived in the portal from the Resolver's stream, never inside the agent. A run that fails or times out (`RUN_TIMEOUT_MS`) closes the Ticket as `escalated` with the holding Reply rather than leaving it stuck.
 
 Each entry of the timeline is a `portal.ticket_events` row, written as the run streams and published to every open SSE connection. Frames are unnamed, so `new EventSource(url).onmessage` receives the whole timeline and reads the kind of entry off `type` in the data: `subagent_start`, `subagent_end`, `tool_call`, `tool_result`, `message`, `interrupt`, `decision`, `verdict`, or the portal's own `status`. The frame id is the entry's sequence, so a reloaded page sends `Last-Event-ID` (or `?lastEventId=`) and gets exactly what it missed before the stream goes live. Entries carry the run number, counting re-runs of a Ticket from 1. Tickets run concurrently, one independent run each.
 
-`RESOLVER` chooses what investigates a Ticket. `fake` is a scripted stand-in that emits Triage and Investigator events, a tool call and its result, a message, and a fixed Verdict, with `FAKE_RESOLVER_STEP_DELAY_MS` between them: the whole lifecycle is exercisable over HTTP with no model and no API key. The real Resolver plugs into the same `TicketResolver` seam.
+`RESOLVER` chooses what investigates a Ticket, through one `TicketResolver` seam that nothing downstream can see past.
+
+- `fake` is a scripted stand-in that emits Triage and Investigator events, a tool call and its result, a message, and a fixed Verdict, with `FAKE_RESOLVER_STEP_DELAY_MS` between them: the whole lifecycle is exercisable over HTTP with no model and no API key.
+- `real` is the Resolver from `packages/agents`. It needs `OPENAI_API_KEY` and `COHERE_API_KEY`, and everything the CLI needs: the compose stack, ShopLite migrated, seeded and running, and `pnpm seed:incidents` done. Each Ticket gets its own MCP servers, scoped to the Reporter, and its own LangGraph thread; the models, the prompts and the checkpointer are the portal's and are shared across runs. Every LangChain event the run produces becomes a timeline entry: a `task` call opens a subagent card and its return closes it, and every other tool call and result is a card of its own, nested subagent tools included.
+
+A traced run reports the Langfuse trace it is writing to before it does any work. That is not a timeline entry — it goes on the Ticket as `langfuseTraceId`, so the portal can link to the trace of whichever run is the latest.
+
+## Portal web
+
+`apps/portal-web` is the Reviewer's portal: a Vite React app on 5001 that reads portal-api through a dev-server proxy on `/api`, so requests are same-origin and the API needs no CORS.
+
+```bash
+pnpm portal                                        # portal-api on 5000
+pnpm --filter @incident-resolver/portal-web dev     # portal-web on 5001
+```
+
+`pnpm dev` starts both, along with every other package that has a dev script.
+
+- **Queue** (`/tickets`): every Ticket newest first, with its status, Source, Category, Outcome and Confidence. It re-reads itself every few seconds, so a Ticket filed elsewhere appears without a reload.
+- **Ticket** (`/tickets/:id`): the live Timeline, as a transcript. One rail down the left with the elapsed offset in the gutter and a marker per entry: subagent start and end, tool call and result, message, interrupt, Decision, Verdict, and the portal's own status moves as rules across the rail. Payloads are collapsed by default and Evidence is set in monospace. The panel beside it fills in with the Outcome, Confidence, root cause, Reply and Evidence as the run reaches them.
+- **File a ticket** (`/tickets/new`): a tester's report — a summary, what went wrong, optional steps to reproduce, and an optional ShopLite trace id. Filing it starts the run and opens its Timeline.
+- Each Ticket links out to the two traces it carries: the Resolver run in Langfuse, and the ShopLite request in Grafana Explore against Tempo. Both appear only once there is a trace id to point at, and both base URLs come from `GET /config`.
 
 ## MCP servers
 

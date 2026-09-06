@@ -8,6 +8,11 @@
   "files": {
     "includes": ["**", "!**/node_modules", "!**/dist", "!**/drizzle/meta", "!pnpm-lock.yaml"]
   },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    }
+  },
   "formatter": {
     "enabled": true,
     "indentStyle": "space",
