@@ -17,6 +17,7 @@ describe("loadPrompt", () => {
       "data-investigator",
       "incident-historian",
       "code-rca",
+      "fix-shipper",
       "sentinel",
     ]);
     for (const name of promptNames) {

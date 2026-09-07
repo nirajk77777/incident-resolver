@@ -173,3 +173,42 @@ export const codeRcaSchema = z.object({
     ),
 });
 export type CodeRca = z.infer<typeof codeRcaSchema>;
+
+/**
+ * What the Fix Shipper subagent returns: the branch it pushed Code RCA's patch to, and what
+ * is on it. The Resolver copies `branch`, `title`, `body`, and `files` into `create_pull_request`
+ * unchanged, so this is the whole of the Proposal a Reviewer will see.
+ *
+ * `pushed` is separate from `problem` because a push that did not happen is the one thing the
+ * Resolver must not read past: a pull request asked for on a branch that is not there would
+ * put a Reviewer in front of a Proposal GitHub will refuse.
+ */
+export const fixShipperSchema = z.object({
+  branch: z
+    .string()
+    .min(1)
+    .describe("The branch on ShopLite the patch was pushed to, exactly as it was named for you"),
+  pushed: z
+    .boolean()
+    .describe(
+      "Whether push_files reported the files were pushed to that branch. False if it did not",
+    ),
+  files: z
+    .array(z.string().min(1))
+    .describe("The repository-relative paths that were pushed, from git_diff_names"),
+  title: z
+    .string()
+    .min(1)
+    .describe("The pull request's title: one line naming the defect, not the Ticket"),
+  body: z
+    .string()
+    .min(1)
+    .describe(
+      "The pull request's body: the RCA in markdown, with the root cause, the failing test, and the fix",
+    ),
+  problem: z
+    .string()
+    .nullable()
+    .describe("What stopped the push, when pushed is false; null when it succeeded"),
+});
+export type FixShipperReport = z.infer<typeof fixShipperSchema>;

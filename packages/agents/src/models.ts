@@ -12,6 +12,7 @@ export type Models = {
   triage: ChatOpenAI;
   investigator: ChatOpenAI;
   codeRca: ChatOpenAI;
+  fixShipper: ChatOpenAI;
 };
 
 export function createModels(config: Config, apiKey: string): Models {
@@ -21,5 +22,6 @@ export function createModels(config: Config, apiKey: string): Models {
     triage: model(config.models.triage),
     investigator: model(config.models.investigator),
     codeRca: model(config.models.codeRca),
+    fixShipper: model(config.models.fixShipper),
   };
 }

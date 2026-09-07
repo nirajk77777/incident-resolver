@@ -38,6 +38,9 @@ importers:
       '@incident-resolver/mcp-database':
         specifier: workspace:*
         version: link:../../packages/mcp-database
+      '@incident-resolver/mcp-incidents':
+        specifier: workspace:*
+        version: link:../../packages/mcp-incidents
       '@incident-resolver/shared':
         specifier: workspace:*
         version: link:../../packages/shared

@@ -15,6 +15,7 @@ import { z } from "zod";
 
 export const APPLY_DATA_FIX = "apply_data_fix";
 export const SEND_CUSTOMER_REPLY = "send_customer_reply";
+export const CREATE_PULL_REQUEST = "create_pull_request";
 
 export type DataFixRequest = {
   /** One UPDATE or DELETE with a WHERE clause on a ShopLite table. */
@@ -25,11 +26,54 @@ export type DataFixRequest = {
 
 export type ReplyRequest = { text: string };
 
+/**
+ * The pull request the Resolver asked for. The branch is not here: it is derived from the
+ * Ticket id on both sides of the gate, so what a Reviewer approves and what GitHub is asked
+ * for are the branch the patch is actually on rather than a string that went through a model.
+ */
+export type PullRequestRequest = {
+  title: string;
+  /** The RCA: root cause, the failing test, and the fix. */
+  body: string;
+  /** The files the branch carries, for the Reviewer to see what is in it. */
+  files: string[];
+};
+
+/** What GitHub did when the approved pull request was opened. */
+export type PullRequestOpened =
+  | { ok: true; url: string; number: number }
+  | { ok: false; reason: string };
+
+/**
+ * Opens the pull request on GitHub. Supplied by whoever built the run, since reaching GitHub
+ * means holding this run's MCP client; the tool below calls it only once a Reviewer has said
+ * so, and hands what it answered to the effects, which are what record it.
+ */
+export type OpenPullRequest = (request: PullRequestRequest) => Promise<PullRequestOpened>;
+
 /** What the caller does when a Proposal is approved. Each returns what the model then reads. */
 export type WriteEffects = {
   applyDataFix(request: DataFixRequest): Promise<string>;
   sendCustomerReply(request: ReplyRequest): Promise<string>;
+  /**
+   * Records what opening the pull request did — on the approval, and as an internal note on
+   * the Ticket carrying the link — and answers the Resolver. The call to GitHub has already
+   * happened by the time this runs: `opened` is what it said.
+   */
+  createPullRequest(request: PullRequestRequest, opened: PullRequestOpened): Promise<string>;
 };
+
+/**
+ * The opener for a run that has no GitHub MCP server: no token configured, or a portal with
+ * no ShopLite repository. The tool still exists and is still gated, so the refusal a Reviewer's
+ * approval runs into says what is missing rather than the Resolver finding no tool to call.
+ */
+export const noGithubOpener: OpenPullRequest = async () => ({
+  ok: false,
+  reason:
+    "This run has no GitHub MCP server, so there was nowhere to open the pull request. Say so " +
+    "in rootCause and escalate: the patch is in the Workspace and a person can pick it up.",
+});
 
 const dataFixArgs = z.object({
   sql: z
@@ -46,6 +90,19 @@ const dataFixArgs = z.object({
     ),
 });
 
+const pullRequestArgs = z.object({
+  title: z.string().min(1).describe("The pull request's title, copied from the Fix Shipper"),
+  body: z
+    .string()
+    .min(1)
+    .describe(
+      "The pull request's body: the RCA, with the root cause, the failing test, and the fix",
+    ),
+  files: z
+    .array(z.string().min(1))
+    .describe("The files the branch carries, copied from the Fix Shipper"),
+});
+
 const replyArgs = z.object({
   text: z
     .string()
@@ -53,7 +110,11 @@ const replyArgs = z.object({
     .describe("The Reply as the Reporter will read it, in full: no placeholders, no notes"),
 });
 
-export function createWriteTools(effects: WriteEffects): StructuredTool[] {
+/**
+ * The three tools, with the one call that reaches GitHub bound in. `open` runs inside the
+ * approved tool and never before it, so a Proposal a Reviewer has not answered opens nothing.
+ */
+export function createWriteTools(effects: WriteEffects, open: OpenPullRequest): StructuredTool[] {
   return [
     tool(async (args: z.infer<typeof dataFixArgs>) => effects.applyDataFix(args), {
       name: APPLY_DATA_FIX,
@@ -72,5 +133,20 @@ export function createWriteTools(effects: WriteEffects): StructuredTool[] {
         "and carry the text the result reports back into the Verdict unchanged.",
       schema: replyArgs,
     }),
+    tool(
+      async (args: z.infer<typeof pullRequestArgs>) =>
+        effects.createPullRequest(args, await open(args)),
+      {
+        name: CREATE_PULL_REQUEST,
+        description:
+          "Opens the pull request on ShopLite's repository from the branch the Fix Shipper pushed. " +
+          "The branch is this Ticket's own and is filled in for you, so it takes only the title, the " +
+          "body, and the files. A human Reviewer sees all of it first and approves or rejects; nothing " +
+          "is opened unless they approve. Call it once the Fix Shipper reports the push succeeded, " +
+          "with its title, body, and files unchanged, and read the result: it says whether the pull " +
+          "request exists and where.",
+        schema: pullRequestArgs,
+      },
+    ),
   ];
 }

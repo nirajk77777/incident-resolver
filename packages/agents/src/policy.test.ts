@@ -1,7 +1,12 @@
-import type { Verdict } from "@incident-resolver/shared";
-import { ESCALATION_REPLY } from "@incident-resolver/shared";
+import { ESCALATION_REPLY, type Verdict } from "@incident-resolver/shared";
 import { describe, expect, it } from "vitest";
-import { applyConfidencePolicy, investigationWarnings, isFastPath, ranInParallel } from "./policy";
+import {
+  endingWarnings,
+  investigationWarnings,
+  isFastPath,
+  ranInParallel,
+  settleVerdict,
+} from "./policy";
 import type { RunSummary } from "./run-summary";
 
 const triage = {
@@ -32,36 +37,72 @@ describe("isFastPath", () => {
   });
 });
 
-describe("applyConfidencePolicy", () => {
-  const verdict: Verdict = {
+describe("settleVerdict", () => {
+  const answered: Verdict = {
     outcome: "answered",
     category: "user_error",
-    confidence: 0.4,
-    rootCause: "Probably a declined card, but the payments table was empty.",
-    evidence: [],
+    confidence: 0.9,
+    rootCause: "The bank declined the card.",
+    evidence: [{ fact: "gateway said insufficient_funds", provenance: "search_logs" }],
     reply: "Your card was declined.",
   };
+  const confident = { confidenceThreshold: 0.6, escalationAsked: undefined };
 
-  it("escalates a Verdict whose Confidence is below the threshold and swaps in the holding Reply", () => {
-    const result = applyConfidencePolicy(verdict, 0.6);
-    expect(result.outcome).toBe("escalated");
-    expect(result.reply).toBe(ESCALATION_REPLY);
-    expect(result.rootCause).toBe(verdict.rootCause);
-    expect(result.confidence).toBe(0.4);
+  it("leaves a confident Verdict nobody escalated exactly as the Resolver wrote it", () => {
+    expect(settleVerdict(answered, confident)).toBe(answered);
+    expect(endingWarnings(answered, answered, confident)).toEqual([]);
   });
 
-  it("leaves a confident Verdict alone", () => {
-    const confident = { ...verdict, confidence: 0.6 };
-    expect(applyConfidencePolicy(confident, 0.6)).toBe(confident);
-  });
-
-  it("leaves an already escalated Verdict's Reply alone", () => {
-    const escalated: Verdict = {
-      ...verdict,
-      outcome: "escalated",
-      reply: "We are looking into it.",
+  it("escalates a run that asked for a human, whatever Outcome it then returned", () => {
+    const ending = {
+      confidenceThreshold: 0.6,
+      escalationAsked: "the logs and the orders disagree",
     };
-    expect(applyConfidencePolicy(escalated, 0.6)).toBe(escalated);
+    const settled = settleVerdict(answered, ending);
+
+    expect(settled.outcome).toBe("escalated");
+    expect(settled.reply).toBe(ESCALATION_REPLY);
+    // What the person picking it up reads: everything the run did establish.
+    expect(settled.evidence).toEqual(answered.evidence);
+    expect(settled.rootCause).toContain("The bank declined the card.");
+    expect(settled.rootCause).toContain("the logs and the orders disagree");
+    expect(endingWarnings(answered, settled, ending)).toEqual([
+      "The Resolver called escalate_to_human and then returned answered: the Ticket was escalated",
+    ]);
+  });
+
+  it("escalates a Verdict below the threshold, and says which rule did it", () => {
+    const uncertain = { ...answered, confidence: 0.4 };
+    const settled = settleVerdict(uncertain, confident);
+
+    expect(settled.outcome).toBe("escalated");
+    expect(endingWarnings(uncertain, settled, confident)).toEqual([
+      "Confidence 0.4 is below the threshold 0.6, so the Ticket was escalated rather than closed as answered.",
+    ]);
+  });
+
+  it("swaps in the holding Reply even when the run escalated itself, having asked", () => {
+    // What the prompt asks for: call the tool, then return an escalated Verdict. The Reply the
+    // model wrote is still not the one the Reporter reads, because a person writes that.
+    const own: Verdict = {
+      ...answered,
+      outcome: "escalated",
+      reply: "Here is what we think went wrong with your order.",
+    };
+    const settled = settleVerdict(own, {
+      confidenceThreshold: 0.6,
+      escalationAsked: "the logs and the orders disagree",
+    });
+
+    expect(settled.reply).toBe(ESCALATION_REPLY);
+    expect(settled.rootCause).toContain("the logs and the orders disagree");
+  });
+
+  it("prefers the ask over the threshold, so the reason a run escalated is the one it gave", () => {
+    const ending = { confidenceThreshold: 0.6, escalationAsked: "no Evidence either way" };
+    expect(settleVerdict({ ...answered, confidence: 0.2 }, ending).rootCause).toContain(
+      "no Evidence either way",
+    );
   });
 });
 

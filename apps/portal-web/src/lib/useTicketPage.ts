@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { decide, fetchApprovals, fetchTicket, parseTimelineFrame, timelineUrl } from "./api";
+import {
+  decide,
+  fetchApprovals,
+  fetchTicket,
+  parseTimelineFrame,
+  rerunTicket,
+  resolveTicket,
+  timelineUrl,
+} from "./api";
 import {
   type Approval,
+  type ManualResolutionInput,
   mergeEntries,
   type ReviewerDecision,
   type Ticket,
@@ -16,6 +25,10 @@ export type TicketPage = {
   error: string | null;
   /** Answers the Proposal the Ticket is waiting on. Throws so the card can say what went wrong. */
   decide: (decision: ReviewerDecision) => Promise<void>;
+  /** Finishes an escalated Ticket on what the Reviewer wrote. Throws so the form can say why not. */
+  resolve: (resolution: ManualResolutionInput) => Promise<void>;
+  /** Runs the Ticket again. The new run's entries arrive on the same open stream. */
+  rerun: () => Promise<void>;
 };
 
 /**
@@ -79,5 +92,18 @@ export function useTicketPage(id: string): TicketPage {
     [id],
   );
 
-  return { ticket, entries, approvals, error, decide: answer };
+  const resolve = useCallback(
+    async (resolution: ManualResolutionInput) => {
+      setTicket(await resolveTicket(id, resolution));
+    },
+    [id],
+  );
+
+  // The reopened row comes back from the re-run, so the page shows the Ticket running again
+  // without waiting for the new run's first entry to reach the stream.
+  const rerun = useCallback(async () => {
+    setTicket(await rerunTicket(id));
+  }, [id]);
+
+  return { ticket, entries, approvals, error, decide: answer, resolve, rerun };
 }

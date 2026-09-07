@@ -26,6 +26,11 @@ export type KnowledgeStore = {
   nearestIncidents(embedding: number[], limit: number): Promise<Candidate<IncidentRecord>[]>;
   getIncident(id: string): Promise<IncidentRecord | null>;
   insertIncident(incident: NewIncident, embedding: number[]): Promise<IncidentRecord>;
+  /**
+   * Removes whatever a Ticket has already written here, so re-running it leaves one Incident
+   * rather than one per run, and answers how many it removed.
+   */
+  deleteIncidentsForTicket(sourceTicketId: string): Promise<number>;
   nearestHelpArticles(embedding: number[], limit: number): Promise<Candidate<HelpArticleRecord>[]>;
   insertHelpArticle(article: NewHelpArticle, embedding: number[]): Promise<HelpArticleRecord>;
   /** Empties both tables. Used by the seed. */
@@ -56,6 +61,14 @@ export function createKnowledgeStore(db: Db): KnowledgeStore {
         .returning(incidentColumns);
       if (!row) throw new Error("Insert returned no row");
       return row;
+    },
+
+    async deleteIncidentsForTicket(sourceTicketId) {
+      const removed = await db
+        .delete(incidents)
+        .where(eq(incidents.sourceTicketId, sourceTicketId))
+        .returning({ id: incidents.id });
+      return removed.length;
     },
 
     async nearestHelpArticles(embedding, limit) {

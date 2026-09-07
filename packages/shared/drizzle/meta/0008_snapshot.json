@@ -1,5 +1,5 @@
 {
-  "id": "e1a04356-3084-44b6-81b0-4d453156d267",
+  "id": "0286dc58-8543-4d3c-817e-2117b62aa8f8",
   "prevId": "4782c677-703e-4426-aaa8-a5483c370db1",
   "version": "7",
   "dialect": "postgresql",
@@ -428,12 +428,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "fingerprint": {
-          "name": "fingerprint",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "title": {
           "name": "title",
           "type": "text",
@@ -486,6 +480,19 @@
           "primaryKey": false,
           "notNull": false
         },
+        "resolution": {
+          "name": "resolution",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "resolved_by": {
+          "name": "resolved_by",
+          "type": "ticket_resolved_by",
+          "typeSchema": "portal",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -515,22 +522,6 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
-        },
-        "tickets_open_fingerprint_idx": {
-          "name": "tickets_open_fingerprint_idx",
-          "columns": [
-            {
-              "expression": "fingerprint",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"portal\".\"tickets\".\"status\" <> 'closed'",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
         }
       },
       "foreignKeys": {},
@@ -541,6 +532,10 @@
         "tickets_closed_carries_outcome_and_reply": {
           "name": "tickets_closed_carries_outcome_and_reply",
           "value": "(\"portal\".\"tickets\".\"status\" = 'closed') = (\"portal\".\"tickets\".\"outcome\" IS NOT NULL AND \"portal\".\"tickets\".\"reply\" IS NOT NULL)"
+        },
+        "tickets_resolved_only_when_closed": {
+          "name": "tickets_resolved_only_when_closed",
+          "value": "\"portal\".\"tickets\".\"resolved_by\" IS NULL OR \"portal\".\"tickets\".\"status\" = 'closed'"
         },
         "tickets_customer_has_reporter_email": {
           "name": "tickets_customer_has_reporter_email",
@@ -603,6 +598,14 @@
         "data_fixed",
         "fix_proposed",
         "escalated"
+      ]
+    },
+    "portal.ticket_resolved_by": {
+      "name": "ticket_resolved_by",
+      "schema": "portal",
+      "values": [
+        "agent",
+        "human"
       ]
     },
     "portal.ticket_source": {

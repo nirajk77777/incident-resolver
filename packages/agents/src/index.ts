@@ -1,6 +1,12 @@
 export { createCheckpointer } from "./checkpointer";
 export { readTicket } from "./cli-args";
 export {
+  createEscalationTool,
+  ESCALATE_TO_HUMAN,
+  escalationRequested,
+} from "./escalate";
+export { branchNameFor, type GithubRepo, parseRepo } from "./github";
+export {
   createProcedureGuard,
   delegationRefusal,
   type Procedure,
@@ -17,10 +23,12 @@ export {
 export { createMcpClient, type McpServerName, mcpServerNames } from "./mcp";
 export { createModels, type Models } from "./models";
 export {
-  applyConfidencePolicy,
+  type Ending,
+  endingWarnings,
   investigationWarnings,
   isFastPath,
   ranInParallel,
+  settleVerdict,
 } from "./policy";
 export {
   loadPrompt,
@@ -37,6 +45,7 @@ export {
   createResolver,
   defaultThreadId,
   freshThreadId,
+  type GithubOptions,
   pendingProposals,
   type ResolveOptions,
   type Resolver,
@@ -93,6 +102,8 @@ export {
   APPLY_DATA_FIX,
   createWriteTools,
   type DataFixRequest,
+  type PullRequestOpened,
+  type PullRequestRequest,
   type ReplyRequest,
   SEND_CUSTOMER_REPLY,
   type WriteEffects,

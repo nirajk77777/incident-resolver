@@ -127,6 +127,7 @@ Because both pipelines are OTel, the ShopLite trace id found by the Log Investig
 | `send_customer_reply` | Approve or edit. Always approved in the demo; auto-send is a policy toggle mentioned in the Vision. |
 | PR merge | Never by the agent |
 | Confidence below 0.6 after investigation | Auto-escalate with the Evidence attached |
+| `escalate_to_human` | Ungated: it writes nothing. Once called, the Ticket is escalated whatever the Verdict then claims (ADR-0003) |
 
 Implemented with Deep Agents `interruptOn` on those three tools, a Postgres checkpointer keyed by ticket id, and a `POST /tickets/:id/decision` endpoint that resumes the thread with `Command({resume})`. One Reviewer role, no login. Multiple Tickets can run concurrently, one LangGraph thread each, no global lock.
 
@@ -164,7 +165,7 @@ Seeded Incidents are ShopLite-specific history, not generic e-commerce: dated ac
 
 ## 7. Data model (portal schema)
 
-- `tickets`: id, source (`customer` | `tester` | `sentinel`), reporter_email, trace_id, title, body, status, category, confidence, outcome, reply, root_cause, created_at, closed_at. A check constraint ties `closed` to having exactly one Outcome and one Reply. Severity arrives with Triage and fingerprint with Sentinel, each added by the issue that first writes it.
+- `tickets`: id, source (`customer` | `tester` | `sentinel`), reporter_email, trace_id, title, body, status, category, confidence, outcome, reply, root_cause, resolution, resolved_by (`agent` | `human`, null while nobody has), created_at, closed_at. A check constraint ties `closed` to having exactly one Outcome and one Reply, and another keeps `resolved_by` to closed Tickets. Severity arrives with Triage and fingerprint with Sentinel, each added by the issue that first writes it.
 - `ticket_events`: id (the sequence the SSE stream sends as its event id), ticket_id, run, type (`tool_call` | `tool_result` | `subagent_start` | `subagent_end` | `message` | `interrupt` | `decision` | `verdict` | `status`), payload jsonb, created_at. This feeds the live timeline. `verdict` carries the Resolver's structured output and `status` is the portal's own entry, written whenever the lifecycle moves.
 - `approvals`: id, ticket_id, action, proposal jsonb, decision, edited_proposal jsonb, snapshot jsonb, decided_at
 - `incidents` (knowledge schema): id, title, symptoms, root_cause, resolution, category, embedding vector(1536), source_ticket_id, resolved_by (`agent` | `human`)

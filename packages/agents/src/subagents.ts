@@ -16,6 +16,7 @@ export const LOG_INVESTIGATOR = "log-investigator";
 export const DATA_INVESTIGATOR = "data-investigator";
 export const INCIDENT_HISTORIAN = "incident-historian";
 export const CODE_RCA = "code-rca";
+export const FIX_SHIPPER = "fix-shipper";
 
 /** The three Investigators, in the order the Resolver is told to launch them. */
 export const investigators = [LOG_INVESTIGATOR, DATA_INVESTIGATOR, INCIDENT_HISTORIAN] as const;
@@ -39,21 +40,21 @@ export const dataInvestigatorToolNames = [
 /** The read side of mcp-incidents. `save_incident` is a write at Ticket close, not the Historian's. */
 export const incidentHistorianToolNames = ["search_similar_incidents", "get_incident"] as const;
 
+/** Picks one named tool out of everything the MCP client loaded, failing loudly if it is missing. */
+export function selectTool(tools: StructuredTool[], name: string): StructuredTool {
+  const found = tools.find((candidate) => candidate.name === name);
+  if (found) return found;
+  const available =
+    tools
+      .map((candidate) => candidate.name)
+      .sort()
+      .join(", ") || "none";
+  throw new Error(`MCP tool ${name} is not available; loaded tools: ${available}`);
+}
+
 /** Picks the named tools out of everything the MCP client loaded, failing loudly if one is missing. */
 export function selectTools(tools: StructuredTool[], names: readonly string[]): StructuredTool[] {
-  const byName = new Map(tools.map((tool) => [tool.name, tool]));
-  return names.map((name) => {
-    const tool = byName.get(name);
-    if (!tool) {
-      const available =
-        tools
-          .map((candidate) => candidate.name)
-          .sort()
-          .join(", ") || "none";
-      throw new Error(`MCP tool ${name} is not available; loaded tools: ${available}`);
-    }
-    return tool;
-  });
+  return names.map((name) => selectTool(tools, name));
 }
 
 type SubagentOptions = { model: LanguageModelLike; tools: StructuredTool[]; prompts: Prompts };

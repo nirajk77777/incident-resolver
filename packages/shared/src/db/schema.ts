@@ -80,8 +80,16 @@ export type TicketEventType = (typeof ticketEventTypes)[number];
 export const decisions = ["approve", "edit", "reject"] as const;
 export type Decision = (typeof decisions)[number];
 
+/**
+ * Who resolved a Ticket, and so who wrote the Incident it left behind. A Ticket the Resolver
+ * finished is resolved by the agent; an escalated one is resolved by the human who closes it
+ * through the manual resolution form, and stays unresolved until they do.
+ */
+export const resolvedByValues = ["agent", "human"] as const;
+export type ResolvedBy = (typeof resolvedByValues)[number];
+
 export const incidentCategory = knowledge.enum("incident_category", incidentCategories);
-export const incidentResolvedBy = knowledge.enum("incident_resolved_by", ["agent", "human"]);
+export const incidentResolvedBy = knowledge.enum("incident_resolved_by", resolvedByValues);
 
 /**
  * The distilled record of a closed Ticket: symptoms, root cause, and what fixed it.
@@ -131,6 +139,7 @@ export const ticketStatus = portal.enum("ticket_status", ticketStatuses);
 export const ticketOutcome = portal.enum("ticket_outcome", outcomes);
 export const ticketEventType = portal.enum("ticket_event_type", ticketEventTypes);
 export const approvalDecision = portal.enum("approval_decision", decisions);
+export const ticketResolvedBy = portal.enum("ticket_resolved_by", resolvedByValues);
 
 /**
  * A request for investigation, whatever its Source. The columns after `status` are filled
@@ -167,6 +176,14 @@ export const tickets = portal.table(
     outcome: ticketOutcome("outcome"),
     reply: text("reply"),
     rootCause: text("root_cause"),
+    /**
+     * What settled the Ticket: derived from the Verdict when the Resolver closed it, written
+     * by the Reviewer when a person did. It is the Incident's resolution, kept on the Ticket
+     * so the portal can show it without reading the knowledge base.
+     */
+    resolution: text("resolution"),
+    /** Who resolved it. Null on an escalated Ticket no person has picked up yet. */
+    resolvedBy: ticketResolvedBy("resolved_by"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     closedAt: timestamp("closed_at", { withTimezone: true }),
   },
@@ -174,6 +191,10 @@ export const tickets = portal.table(
     check(
       "tickets_closed_carries_outcome_and_reply",
       sql`(${table.status} = 'closed') = (${table.outcome} IS NOT NULL AND ${table.reply} IS NOT NULL)`,
+    ),
+    check(
+      "tickets_resolved_only_when_closed",
+      sql`${table.resolvedBy} IS NULL OR ${table.status} = 'closed'`,
     ),
     check(
       "tickets_customer_has_reporter_email",

@@ -64,19 +64,20 @@ describe("the portal store", () => {
 
     // Once the Ticket is closed the problem may be filed again, which is what should happen
     // if the same route starts failing next week.
-    await store.closeTicket(first.ticket.id, {
-      ...FAKE_VERDICT,
-      outcome: "escalated",
-    });
+    await store.closeTicket(
+      first.ticket.id,
+      { ...FAKE_VERDICT, outcome: "escalated" },
+      "Nobody has picked this up yet.",
+    );
     const afterClose = await store.createTicket(detection);
     opened.push(afterClose.ticket.id);
     expect(afterClose.created).toBe(true);
     expect(afterClose.ticket.id).not.toBe(first.ticket.id);
   });
 
-  it("numbers a Ticket's first run 1 and every re-run after it", async () => {
+  it("is on run 0 until a run writes to it, and on the highest run afterwards", async () => {
     const ticket = await openTicket();
-    expect(await store.nextRun(ticket.id)).toBe(1);
+    expect(await store.latestRun(ticket.id)).toBe(0);
 
     await store.appendEvent({
       ticketId: ticket.id,
@@ -84,7 +85,15 @@ describe("the portal store", () => {
       type: "message",
       payload: { text: "Looking into it" },
     });
-    expect(await store.nextRun(ticket.id)).toBe(2);
+    expect(await store.latestRun(ticket.id)).toBe(1);
+
+    await store.appendEvent({
+      ticketId: ticket.id,
+      run: 2,
+      type: "message",
+      payload: { text: "And again" },
+    });
+    expect(await store.latestRun(ticket.id)).toBe(2);
   });
 
   it("serves a timeline in order, and only what comes after the entry a client saw", async () => {
@@ -109,14 +118,65 @@ describe("the portal store", () => {
     ).toEqual(["two", "three"]);
   });
 
-  it("closes a Ticket on its Verdict, with the Outcome and the Reply", async () => {
+  it("closes a Ticket on its Verdict, with the Outcome, the Reply, and the agent as resolver", async () => {
     const ticket = await openTicket();
-    const closed = await store.closeTicket(ticket.id, FAKE_VERDICT);
+    const closed = await store.closeTicket(ticket.id, FAKE_VERDICT, "Answered from the logs.");
 
     expect(closed.status).toBe("closed");
     expect(closed.outcome).toBe(FAKE_VERDICT.outcome);
     expect(closed.reply).toBe(FAKE_VERDICT.reply);
+    expect(closed.resolution).toBe("Answered from the logs.");
+    expect(closed.resolvedBy).toBe("agent");
     expect(closed.closedAt).toBeInstanceOf(Date);
+  });
+
+  it("leaves an escalated Ticket resolved by nobody, which is what makes it a Reviewer's", async () => {
+    const ticket = await openTicket();
+    const escalated = await store.closeTicket(
+      ticket.id,
+      { ...FAKE_VERDICT, outcome: "escalated" },
+      "Handed to a human.",
+    );
+    expect(escalated.resolvedBy).toBeNull();
+  });
+
+  it("finishes an escalated Ticket on what a Reviewer wrote, marked resolved by a human", async () => {
+    const ticket = await openTicket();
+    await store.closeTicket(ticket.id, { ...FAKE_VERDICT, outcome: "escalated" }, "Handed over.");
+
+    const resolved = await store.resolveManually(ticket.id, {
+      rootCause: "The gateway timed out.",
+      resolution: "Deleted the orphaned order row.",
+      reply: "The stuck order is cleared, please try again.",
+      author: "Priya",
+    });
+
+    expect(resolved.status).toBe("closed");
+    // The Outcome stays what it was: escalation is how this Ticket ended, and a person
+    // finishing it does not change that it needed one.
+    expect(resolved.outcome).toBe("escalated");
+    expect(resolved.reply).toBe("The stuck order is cleared, please try again.");
+    expect(resolved.rootCause).toBe("The gateway timed out.");
+    expect(resolved.resolution).toBe("Deleted the orphaned order row.");
+    expect(resolved.resolvedBy).toBe("human");
+  });
+
+  it("reopens a closed Ticket for another run, clearing what the last one concluded", async () => {
+    const ticket = await openTicket();
+    await store.closeTicket(ticket.id, FAKE_VERDICT, "Answered from the logs.");
+
+    const reopened = await store.reopen(ticket.id);
+    expect(reopened).toMatchObject({
+      status: "new",
+      outcome: null,
+      reply: null,
+      category: null,
+      confidence: null,
+      rootCause: null,
+      resolution: null,
+      resolvedBy: null,
+      closedAt: null,
+    });
   });
 
   it("refuses to close a Ticket without an Outcome and a Reply, whatever the caller does", async () => {

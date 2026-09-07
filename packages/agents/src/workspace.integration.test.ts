@@ -3,9 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getConfig } from "@incident-resolver/shared/config";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { WORKSPACE_ROUTE, workspaceBackend } from "./code-rca";
 import { createCodeTools, GIT_DIFF_NAMES, RUN_TESTS } from "./code-tools";
 import { createWorkspaceStore, type Workspace } from "./workspace";
+import { WORKSPACE_ROUTE, workspaceBackend } from "./workspace-mount";
 
 /**
  * The Workspace against the real ShopLite repository: a clone, an install, and the two tools

@@ -4,16 +4,12 @@ import { join } from "node:path";
 import type { LanguageModelLike } from "@langchain/core/language_models/base";
 import { isSandboxBackend } from "deepagents";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  createCodeRcaSubagent,
-  createWorkspaceProvisioner,
-  WORKSPACE_ROUTE,
-  workspaceBackend,
-} from "./code-rca";
+import { createCodeRcaSubagent, createWorkspaceProvisioner } from "./code-rca";
 import { GIT_DIFF_NAMES, RUN_TESTS } from "./code-tools";
 import { loadPrompt, type Prompts } from "./prompts";
 import { CODE_RCA } from "./subagents";
 import type { Workspace } from "./workspace";
+import { WORKSPACE_ROUTE, workspaceBackend } from "./workspace-mount";
 
 const dirs: string[] = [];
 

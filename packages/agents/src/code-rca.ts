@@ -1,12 +1,6 @@
 import { messageOf } from "@incident-resolver/shared";
 import type { LanguageModelLike } from "@langchain/core/language_models/base";
-import {
-  CompositeBackend,
-  FilesystemBackend,
-  type FilesystemPermission,
-  StateBackend,
-  type SubAgent,
-} from "deepagents";
+import type { SubAgent } from "deepagents";
 import { createMiddleware, ToolMessage, toolStrategy } from "langchain";
 import { createCodeTools } from "./code-tools";
 import type { Prompts } from "./prompts";
@@ -14,53 +8,16 @@ import { codeRcaSchema } from "./schemas";
 import { CODE_RCA } from "./subagents";
 import { createToolErrorGuard } from "./tool-errors";
 import type { Workspace } from "./workspace";
+import { workspaceWritable } from "./workspace-mount";
 
 /**
  * Code RCA: the subagent that reads ShopLite's source, reproduces the bug with a failing test,
  * patches it, and runs the suite green — in a Workspace it cannot get out of, with no shell.
  *
- * Two things confine it, and both are configuration rather than prompt. The Workspace is
- * mounted at one route on the agent's filesystem, backed by a `FilesystemBackend` in virtual
- * mode, so a path that climbs out of the clone is rejected before it reaches the disk. And the
- * route is denied to the Resolver and every other subagent and allowed only here, so the one
- * agent that can touch ShopLite's code is the one whose job it is (ADR-0002).
+ * What confines it is the mount in `workspace-mount.ts`: the clone sits at one route on the
+ * agent's filesystem, closed to the Resolver and to every other subagent, and this is the one
+ * agent the route is opened to for writing (ADR-0002).
  */
-
-/** Where the Workspace is mounted in the agent's view of the filesystem. */
-export const WORKSPACE_ROUTE = "/workspace";
-
-/**
- * The same mount as CompositeBackend wants it registered. The trailing slash is load-bearing:
- * the composite strips the route by length and prefixes a slash back, so a route without one
- * hands the Workspace's backend a doubled `//path` that no file matches.
- */
-const WORKSPACE_MOUNT = `${WORKSPACE_ROUTE}/`;
-
-const workspacePaths = [WORKSPACE_ROUTE, `${WORKSPACE_ROUTE}/**`];
-
-/**
- * The agent's filesystem: the Workspace at its route, everything else in graph state as before.
- *
- * Routing rather than rooting the whole agent at the clone is what keeps the agent's own
- * scratch files — the large tool results the filesystem middleware evicts — out of ShopLite's
- * working tree, where `git_diff_names` would report them as part of the patch.
- *
- * Note the composite supports no `execute`, so the filesystem middleware drops its shell tool:
- * there is no command in this agent that this repository did not write.
- */
-export function workspaceBackend(workspace: Workspace): CompositeBackend {
-  return new CompositeBackend(new StateBackend(), {
-    [WORKSPACE_MOUNT]: new FilesystemBackend({ rootDir: workspace.dir, virtualMode: true }),
-  });
-}
-
-/** Who may read and write the Workspace. `mode` is the whole difference between the two rules. */
-function workspaceRule(mode: "allow" | "deny"): FilesystemPermission[] {
-  return [{ operations: ["read", "write"], paths: workspacePaths, mode }];
-}
-
-/** The Resolver's rule and every subagent's that does not override it: the Workspace is closed. */
-export const workspaceClosed = workspaceRule("deny");
 
 /**
  * Clones ShopLite before Code RCA is handed the delegation, and never before that.
@@ -70,6 +27,9 @@ export const workspaceClosed = workspaceRule("deny");
  * directory that is not there yet reads as a Workspace with no ShopLite in it. Waiting until
  * the delegation is also what keeps the cost off every other Ticket — a Question answered from
  * a Help article never reaches this middleware, so it never pays for a clone and an install.
+ *
+ * The Fix Shipper needs no clone of its own: it only runs once Code RCA has reported, so by
+ * then this has already made one.
  *
  * A clone that fails comes back as a tool error rather than ending the run, the way a refused
  * delegation does: the Resolver reads it and escalates with what the Evidence already showed.
@@ -119,7 +79,7 @@ export function createCodeRcaSubagent({ model, prompts, workspace }: CodeRcaOpti
     systemPrompt: prompts.text("code-rca"),
     model,
     tools: createCodeTools(workspace),
-    permissions: workspaceRule("allow"),
+    permissions: workspaceWritable,
     middleware: [createToolErrorGuard()],
     responseFormat: toolStrategy(codeRcaSchema),
   };

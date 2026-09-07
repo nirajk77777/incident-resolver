@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { ApprovalCard, DecidedApproval } from "../components/Approval";
 import {
   CategoryMark,
@@ -8,6 +9,7 @@ import {
   StatusPill,
   TraceLink,
 } from "../components/chrome";
+import { ManualResolutionForm, ManualResolutionPanel } from "../components/ManualResolution";
 import { Timeline } from "../components/Timeline";
 import type { PortalConfig } from "../lib/api";
 import { grafanaTraceUrl, langfuseTraceUrl } from "../lib/links";
@@ -15,6 +17,7 @@ import { linkProps } from "../lib/navigation";
 import type { Route } from "../lib/routes";
 import {
   type Approval,
+  awaitsManualResolution,
   confidenceLabel,
   type EvidenceReference,
   isRunning,
@@ -40,13 +43,14 @@ export function TicketPage({
   config: PortalConfig | null;
   go: (route: Route) => void;
 }) {
-  const { ticket, entries, approvals, error, decide } = useTicketPage(id);
+  const { ticket, entries, approvals, error, decide, resolve, rerun } = useTicketPage(id);
 
   if (error) return <Problem message={error} />;
   if (!ticket) return <p className="py-16 text-center text-[13px] text-muted">Loading…</p>;
 
   const running = isRunning(ticket);
   const waiting = pendingApproval(approvals);
+  const escalated = awaitsManualResolution(ticket);
   return (
     <article>
       <a {...linkProps({ page: "tickets" }, go)} className="eyebrow inline-block hover:text-ink">
@@ -68,7 +72,10 @@ export function TicketPage({
           <h2 className="m-0 max-w-2xl text-[27px] leading-tight font-semibold tracking-tight">
             {ticket.title}
           </h2>
-          <StatusPill status={ticket.status} />
+          <div className="flex items-center gap-3">
+            <StatusPill status={ticket.status} />
+            {!running && ticket.resolvedBy !== "human" && <Rerun onRerun={rerun} />}
+          </div>
         </div>
         <p className="mt-3 mb-0 max-w-2xl font-serif text-[15.5px] leading-relaxed whitespace-pre-line text-ink/85">
           {ticket.body}
@@ -82,6 +89,12 @@ export function TicketPage({
         </div>
       )}
 
+      {escalated && (
+        <div className="mt-6">
+          <ManualResolutionForm onResolve={resolve} />
+        </div>
+      )}
+
       <div className="mt-6 grid gap-8 lg:grid-cols-[minmax(0,1fr)_20rem]">
         <section>
           <h3 className="eyebrow mb-4">Timeline</h3>
@@ -89,10 +102,47 @@ export function TicketPage({
         </section>
         <aside className="space-y-6 lg:sticky lg:top-6 lg:self-start">
           <Resolution ticket={ticket} entries={entries} />
+          <ManualResolutionPanel ticket={ticket} />
           <Decisions approvals={approvals} />
         </aside>
       </div>
     </article>
+  );
+}
+
+/**
+ * Runs the Ticket again, from the top, on a fresh thread. Offered on any Ticket the Resolver
+ * has finished with: what an earlier run did stays on the Timeline under its own run number,
+ * so a second opinion costs nothing but the run.
+ */
+function Rerun({ onRerun }: { onRerun: () => Promise<void> }) {
+  const [starting, setStarting] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+
+  async function start() {
+    setStarting(true);
+    setProblem(null);
+    try {
+      await onRerun();
+    } catch (error) {
+      setProblem(error instanceof Error ? error.message : String(error));
+    }
+    setStarting(false);
+  }
+
+  return (
+    <span className="flex items-center gap-2">
+      {problem && <span className="text-[12px] text-warn">{problem}</span>}
+      <button
+        type="button"
+        disabled={starting}
+        onClick={() => void start()}
+        title="Starts a new run on a fresh thread; the earlier runs stay on the Timeline"
+        className="border border-rule bg-card px-3 py-1 font-mono text-[11px] text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+      >
+        {starting ? "Starting…" : "Re-run"}
+      </button>
+    </span>
   );
 }
 

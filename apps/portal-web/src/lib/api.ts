@@ -1,6 +1,12 @@
 import type { ResetReport } from "@incident-resolver/shared";
 import type { TrafficPlan } from "./demo";
-import type { Approval, ReviewerDecision, Ticket, TimelineEntry } from "./tickets";
+import type {
+  Approval,
+  ManualResolutionInput,
+  ReviewerDecision,
+  Ticket,
+  TimelineEntry,
+} from "./tickets";
 
 /**
  * Everything the portal reads. The API is served under `/api` by the dev server's proxy, so
@@ -76,6 +82,21 @@ export const decide = (id: string, decision: ReviewerDecision) =>
   post<{ approval: Approval }>(`/tickets/${encodeURIComponent(id)}/decision`, decision).then(
     (body) => body.approval,
   );
+
+/**
+ * How a Reviewer finishes an escalated Ticket. The portal closes it on what they wrote and
+ * writes the Incident, so the next similar Ticket finds what a person worked out here.
+ */
+export const resolveTicket = (id: string, resolution: ManualResolutionInput) =>
+  post<Ticket>(`/tickets/${encodeURIComponent(id)}/resolution`, resolution);
+
+/**
+ * Runs a closed Ticket again on a fresh thread. The Ticket comes back reopened; the new run's
+ * entries arrive on the timeline under the next run number, with the earlier runs left where
+ * they are.
+ */
+export const rerunTicket = (id: string) =>
+  post<Ticket>(`/tickets/${encodeURIComponent(id)}/rerun`, {});
 
 /**
  * The live timeline. `lastEventId` is the sequence the page already holds, so a reconnect

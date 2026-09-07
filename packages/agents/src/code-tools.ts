@@ -98,28 +98,38 @@ export function formatTestRun({ exitCode, stdout, stderr }: CommandResult): stri
 
 const noArgs = z.object({});
 
+/** Runs ShopLite's suite in one Ticket's Workspace. Code RCA's, and nobody else's. */
+export function createRunTestsTool(workspace: Workspace): StructuredTool {
+  return tool(async () => formatTestRun(await workspace.run(...TEST_COMMAND)), {
+    name: RUN_TESTS,
+    description:
+      "Runs ShopLite's whole test suite in your Workspace and returns what it printed. " +
+      "Use it to watch the test you wrote fail before you patch anything, and to prove the " +
+      "suite is green after. It takes no arguments and always runs every test.",
+    schema: noArgs,
+  });
+}
+
+/**
+ * Lists what the Workspace's working tree differs by. Code RCA reads it to check its own
+ * patch; the Fix Shipper reads it to know which files to push, which is why it is a tool of
+ * its own rather than half of a pair.
+ */
+export function createGitDiffNamesTool(workspace: Workspace): StructuredTool {
+  return tool(
+    async () => formatChangedFiles(changedFilesOf((await workspace.run(...STATUS_COMMAND)).stdout)),
+    {
+      name: GIT_DIFF_NAMES,
+      description:
+        "Lists the files you have changed in the Workspace, new files included, and what " +
+        "happened to each. Use it to check the patch is the change you meant to make and " +
+        "nothing else. It takes no arguments.",
+      schema: noArgs,
+    },
+  );
+}
+
 /** The two tools, bound to one Ticket's Workspace, which they clone on first use. */
 export function createCodeTools(workspace: Workspace): StructuredTool[] {
-  return [
-    tool(async () => formatTestRun(await workspace.run(...TEST_COMMAND)), {
-      name: RUN_TESTS,
-      description:
-        "Runs ShopLite's whole test suite in your Workspace and returns what it printed. " +
-        "Use it to watch the test you wrote fail before you patch anything, and to prove the " +
-        "suite is green after. It takes no arguments and always runs every test.",
-      schema: noArgs,
-    }),
-    tool(
-      async () =>
-        formatChangedFiles(changedFilesOf((await workspace.run(...STATUS_COMMAND)).stdout)),
-      {
-        name: GIT_DIFF_NAMES,
-        description:
-          "Lists the files you have changed in the Workspace, new files included, and what " +
-          "happened to each. Use it to check the patch is the change you meant to make and " +
-          "nothing else. It takes no arguments.",
-        schema: noArgs,
-      },
-    ),
-  ];
+  return [createRunTestsTool(workspace), createGitDiffNamesTool(workspace)];
 }

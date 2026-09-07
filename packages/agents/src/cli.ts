@@ -61,6 +61,12 @@ const unattendedEffects: WriteEffects = {
     log(`Reply (not delivered; delivery is a stub):\n${text}`);
     return `The Reply was recorded as written: ${text}`;
   },
+  // Unreachable in practice: `unattended` rejects the Proposal, so the tool never runs and
+  // nothing is opened. It is here because the effect that would have opened it has to say the
+  // same thing the rejection did, rather than something a Reviewer never agreed to.
+  async createPullRequest() {
+    return NO_REVIEWER;
+  },
 };
 
 async function main(): Promise<void> {
@@ -101,6 +107,8 @@ async function main(): Promise<void> {
         .join(", "),
   );
 
+  // No GitHub server on the command line: opening a pull request needs a Reviewer, and there
+  // is none here, so the run has no Fix Shipper and nothing to push with (ADR-0003).
   const mcp = createMcpClient(ticket);
   const checkpointer = await createCheckpointer(config);
   const startedAt = Date.now();

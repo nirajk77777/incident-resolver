@@ -17,10 +17,8 @@ export type PlantedBug = {
   what: string;
   expectedCategory: IncidentCategory;
   /**
-   * Every Outcome that counts as the agent having done its job. More than one where the
-   * system is honestly mid-build: the double discount ends `fix_proposed` once the Fix
-   * Shipper opens the PR, and `escalated` with the RCA and the patch in the Workspace until
-   * then, and both are the agent behaving correctly for the code it is running.
+   * Every Outcome that counts as the agent having done its job. A list rather than one
+   * value because a bug can honestly end more than one way; today none of them does.
    */
   expectedOutcomes: Outcome[];
   /** Why those Outcomes, printed under a failure so the run is readable without PLAN.md. */
@@ -53,18 +51,19 @@ export const plantedBugs: PlantedBug[] = [
     ticket: "packages/agents/tickets/double-discount.json",
     what: "The discount comes off twice on the order",
     expectedCategory: "code_bug",
-    expectedOutcomes: ["fix_proposed", "escalated"],
+    expectedOutcomes: ["fix_proposed"],
     because:
-      "Code RCA clones ShopLite, writes the failing test, and patches the defect. The Fix " +
-      "Shipper turns that into a PR and the Outcome becomes fix_proposed; until it lands, " +
-      "the Ticket escalates with the RCA on the timeline and the patch in the Workspace.",
+      "Code RCA clones ShopLite, writes the failing test, and patches the defect; the Fix " +
+      "Shipper pushes it and the approved pull request opens. A Ticket cannot close " +
+      "fix_proposed unless one actually did, so this row failing as escalated means either " +
+      "GITHUB_TOKEN is unset or the run never got the patch green.",
   },
   {
     key: "empty-cart-crash",
     ticket: "packages/agents/tickets/empty-cart-crash.json",
     what: "Checking out an empty cart crashes the route",
     expectedCategory: "code_bug",
-    expectedOutcomes: ["fix_proposed", "escalated"],
+    expectedOutcomes: ["fix_proposed"],
     because:
       "The same path as the double discount. This is the bug Sentinel finds by itself on " +
       "the demo; the scorecard files it directly so it is graded without waiting for traffic.",

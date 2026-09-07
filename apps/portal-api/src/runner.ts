@@ -1,47 +1,66 @@
 import type { WriteEffects } from "@incident-resolver/agents";
 import {
   type ApprovalAction,
+  applyConfidencePolicy,
+  awaitsManualResolution,
+  BY_AGENT,
+  BY_HUMAN,
+  belowThresholdReason,
   ESCALATION_REPLY,
+  escalated,
   isApprovalAction,
+  type ManualResolution,
   messageOf,
   permits,
   type ReviewerDecision,
-  type TicketEventType,
   type TicketStatus,
   type Verdict,
 } from "@incident-resolver/shared";
 import type { FastifyBaseLogger } from "fastify";
 import type { ApprovalRecord, ApprovalStore, RecordedDecision } from "./approvals";
 import { settledProposal } from "./approvals";
-import type { TicketEventBus } from "./bus";
+import {
+  type IncidentWriter,
+  incidentFromResolution,
+  incidentFromVerdict,
+  resolutionOf,
+} from "./incidents";
+import { withoutPullRequestLinks } from "./reply";
 import type { ResolverDecision, ResolverEvent, TicketResolver } from "./resolver";
 import type { ScoreWriter } from "./scores";
 import { nextStatus } from "./status";
 import type { PortalStore, TicketRecord } from "./store";
+import type { TimelineWriter } from "./timeline";
 import { timelineEntryFor } from "./timeline";
 
 export type TicketRunnerOptions = {
   store: PortalStore;
   approvals: ApprovalStore;
-  bus: TicketEventBus;
   resolver: TicketResolver;
+  /** Writes an entry onto a Ticket's Timeline and puts it on the live wire. */
+  record: TimelineWriter;
   /** What the portal does when one of a run's writes is approved, built per Ticket. */
   effectsFor: (ticket: TicketRecord, run: number) => WriteEffects;
   /** Every Decision and every Outcome is written back to the run's Langfuse trace. */
   scores: ScoreWriter;
+  /** Where the Incident a closed Ticket leaves behind is written. */
+  incidents: IncidentWriter;
+  /** A Verdict less certain than this is escalated, whatever Outcome it claims. */
+  confidenceThreshold: number;
   /** A run that takes longer than this is abandoned and the Ticket escalated. */
   runTimeoutMs: number;
   log: FastifyBaseLogger;
 };
 
-/** Why a Decision could not be taken, in the terms the HTTP layer answers in. */
-export type DecisionRefused = { ok: false; status: number; message: string };
-export type DecisionTaken = { ok: true; approval: ApprovalRecord };
-export type DecisionResult = DecisionTaken | DecisionRefused;
+/** Why something a Reviewer asked for could not be done, in the terms the HTTP layer answers in. */
+export type Refused = { ok: false; status: number; message: string };
+export type DecisionResult = { ok: true; approval: ApprovalRecord } | Refused;
+/** A Ticket a Reviewer resolved by hand, or re-ran, as it stands afterwards. */
+export type TicketResult = { ok: true; ticket: TicketRecord } | Refused;
 
 /**
  * Runs Tickets through the Resolver, one independent run each. Nothing is shared between
- * runs but the store and the bus, so any number of Tickets can be in flight at once.
+ * runs but the store and the timeline writer, so any number of Tickets can be in flight at once.
  */
 export type TicketRunner = {
   /** Starts a run in the background. The Ticket's own timeline reports what it does. */
@@ -54,6 +73,16 @@ export type TicketRunner = {
   decide(ticket: TicketRecord, answer: ReviewerDecision): Promise<DecisionResult>;
   /** How many runs are in flight. A demo reset refuses while any Ticket is still running. */
   busy(): number;
+  /**
+   * Finishes an escalated Ticket on what a Reviewer wrote, and writes the Incident their
+   * resolution leaves behind. This is where the knowledge base learns from a run that failed.
+   */
+  resolve(ticket: TicketRecord, resolution: ManualResolution): Promise<TicketResult>;
+  /**
+   * Runs a closed Ticket again, on the next run number and so on a fresh thread. What the
+   * earlier runs did stays on the Timeline, labelled by the run that did it.
+   */
+  rerun(ticket: TicketRecord): Promise<TicketResult>;
   /** Abandons every in-flight run and waits for them to unwind. */
   stop(): Promise<void>;
 };
@@ -73,23 +102,17 @@ function failedVerdict(reason: string): Verdict {
 export function createTicketRunner({
   store,
   approvals,
-  bus,
   resolver,
+  record,
   effectsFor,
   scores,
+  incidents,
+  confidenceThreshold,
   runTimeoutMs,
   log,
 }: TicketRunnerOptions): TicketRunner {
   const inFlight = new Set<Promise<void>>();
   const shutdown = new AbortController();
-
-  async function record(
-    ticketId: string,
-    run: number,
-    entry: { type: TicketEventType; payload: Record<string, unknown> },
-  ): Promise<void> {
-    bus.publish(ticketId, await store.appendEvent({ ticketId, run, ...entry }));
-  }
 
   async function moveTo(ticket: TicketRecord, run: number, status: TicketStatus): Promise<void> {
     await store.setStatus(ticket.id, status);
@@ -97,41 +120,100 @@ export function createTicketRunner({
   }
 
   /**
-   * The Verdict carries the Outcome and the Reply that make a Ticket closed: one write. Two
-   * things the portal knows and the agent does not are settled here first. A Reply a Reviewer
-   * approved is what the Reporter reads, even if the Resolver then worded its Verdict
-   * differently, since the approved text is the one that was sent. And a Ticket may only close
-   * `data_fixed` if a fix this run proposed was approved and actually changed rows: the
-   * approval records are what happened, and a Verdict that disagrees with them is not the
-   * story a Reporter is told.
+  /**
+   * The write an Outcome claims and did not happen, or nothing when the Verdict is true.
+   *
+   * Two Outcomes assert a write. `data_fixed` says an approved statement changed rows, and
+   * `fix_proposed` says an approved pull request is open on GitHub. Both are recorded on the
+   * approval by the effect that made them, so the records are what happened; a Verdict that
+   * disagrees with them is not the story a Reporter is told.
+   */
+  async function unmadeWrite(
+    ticket: TicketRecord,
+    run: number,
+    outcome: Verdict["outcome"],
+  ): Promise<{ warning: string; rootCause: string; note: string; reason: string } | undefined> {
+    if (outcome === "data_fixed" && !(await approvals.dataFixApplied(ticket.id, run))) {
+      return {
+        warning: "A Verdict claimed a data fix that never ran",
+        rootCause:
+          "No approved data fix changed any rows, so this was escalated rather than closed as fixed.",
+        note: "The Verdict said the data was fixed, but no approved fix changed any rows.",
+        reason: "unverified_fix",
+      };
+    }
+    if (outcome === "fix_proposed" && !(await approvals.pullRequestOpened(ticket.id, run))) {
+      return {
+        warning: "A Verdict claimed a pull request that was never opened",
+        rootCause:
+          "No approved pull request was opened, so this was escalated rather than closed as a fix proposed.",
+        note: "The Verdict said a fix was proposed, but no approved pull request was opened.",
+        reason: "unopened_pull_request",
+      };
+    }
+    return undefined;
+  }
+
+  /**
+   * The Verdict carries the Outcome and the Reply that make a Ticket closed: one write. Four
+   * things the portal knows and the agent does not are settled here first.
+   *
+   * Confidence below the threshold escalates, whatever Outcome the Verdict claims. The rule
+   * lives here as well as in the agent package so it holds for every Resolver behind the seam:
+   * it is the portal that tells the Reporter how their Ticket ended.
+   *
+   * A Reply a Reviewer approved is what the Reporter reads, even if the Resolver then worded
+   * its Verdict differently, since the approved text is the one that was sent. An Outcome that
+   * claims a write is checked against the approval records, above. And the Reply that closes a
+   * customer Ticket carries no link to ShopLite's repository, whoever wrote it.
    */
   async function close(ticket: TicketRecord, run: number, verdict: Verdict): Promise<void> {
-    const [approved, fixed] = await Promise.all([
-      approvals.approvedReply(ticket.id, run),
-      verdict.outcome === "data_fixed"
-        ? approvals.dataFixApplied(ticket.id, run)
-        : Promise.resolve(true),
-    ]);
-    let closing = approved ? { ...verdict, reply: approved } : verdict;
-    if (!fixed) {
-      log.warn({ ticketId: ticket.id, run }, "A Verdict claimed a data fix that never ran");
-      closing = {
-        ...closing,
-        outcome: "escalated",
-        rootCause: `${closing.rootCause} No approved data fix changed any rows, so this was escalated rather than closed as fixed.`,
-        reply: ESCALATION_REPLY,
-      };
+    const settled = applyConfidencePolicy(verdict, confidenceThreshold);
+    if (settled.outcome !== verdict.outcome) {
       await record(ticket.id, run, {
         type: "message",
         payload: {
-          text: "The Verdict said the data was fixed, but no approved fix changed any rows.",
-          reason: "unverified_fix",
+          text: belowThresholdReason(verdict, confidenceThreshold),
+          reason: "below_confidence_threshold",
         },
       });
     }
-    const closed = await store.closeTicket(ticket.id, closing);
+    const [approved, unmade] = await Promise.all([
+      approvals.approvedReply(ticket.id, run),
+      unmadeWrite(ticket, run, settled.outcome),
+    ]);
+    let closing = approved ? { ...settled, reply: approved } : settled;
+    if (unmade) {
+      log.warn({ ticketId: ticket.id, run }, unmade.warning);
+      closing = escalated(closing, unmade.rootCause);
+      await record(ticket.id, run, {
+        type: "message",
+        payload: { text: unmade.note, reason: unmade.reason },
+      });
+    }
+    // Last word on the Reply, so whatever closes a customer Ticket carries no pull request
+    // link: not the Resolver's wording, not a Reviewer's rewording. The link is on the
+    // Timeline as an internal note, which is where the team picks it up (CONTEXT.md).
+    if (ticket.source === "customer") {
+      const cleaned = withoutPullRequestLinks(closing.reply);
+      if (cleaned.removed) {
+        log.warn({ ticketId: ticket.id, run }, "A customer Reply carried a pull request link");
+        closing = { ...closing, reply: cleaned.text };
+        await record(ticket.id, run, {
+          type: "message",
+          payload: {
+            text: "A pull request link was taken out of the Reply before it reached the Reporter.",
+            reason: "link_in_reply",
+          },
+        });
+      }
+    }
+    const closed = await store.closeTicket(ticket.id, closing, resolutionOf(closing));
     await record(ticket.id, run, { type: "status", payload: { status: "closed" } });
     scores.outcome(closed.langfuseTraceId, closing.outcome);
+    // An escalated Ticket is resolved by nobody yet, so there is nothing to teach the
+    // knowledge base until the Reviewer who picks it up writes their resolution.
+    if (closed.resolvedBy === BY_AGENT) await incidents.write(incidentFromVerdict(closed, closing));
   }
 
   /**
@@ -222,7 +304,7 @@ export function createTicketRunner({
   }
 
   async function run(ticket: TicketRecord): Promise<void> {
-    const runNumber = await store.nextRun(ticket.id);
+    const runNumber = (await store.latestRun(ticket.id)) + 1;
     const stream = resolver.resolve({
       ticket: ticketFor(ticket),
       run: runNumber,
@@ -324,6 +406,54 @@ export function createTicketRunner({
 
     busy() {
       return inFlight.size;
+    },
+
+    async resolve(ticket, resolution) {
+      if (!awaitsManualResolution(ticket)) {
+        return {
+          ok: false,
+          status: 409,
+          message: "Only an escalated Ticket that nobody has resolved yet is resolved by hand",
+        };
+      }
+      const resolved = await store.resolveManually(ticket.id, resolution);
+      // On the run that escalated, so the Timeline reads as one story: the run gave up here,
+      // and this is what the person who picked it up found.
+      await record(ticket.id, Math.max(await store.latestRun(ticket.id), 1), {
+        type: "message",
+        payload: {
+          text: `${resolution.author} resolved this Ticket by hand: ${resolution.rootCause}`,
+          reason: "manual_resolution",
+          rootCause: resolution.rootCause,
+          resolution: resolution.resolution,
+          reply: resolution.reply,
+          author: resolution.author,
+        },
+      });
+      await incidents.write(incidentFromResolution(resolved, resolution));
+      return { ok: true, ticket: resolved };
+    },
+
+    async rerun(ticket) {
+      // One run at a time per Ticket: the run in flight is the only writer of this row, and a
+      // second one would race it for the Ticket's status and for the approval it is holding.
+      if (ticket.status !== "closed") {
+        return { ok: false, status: 409, message: "This Ticket is still running" };
+      }
+      // A person has had the last word on this one. Re-running clears the row a run wrote,
+      // which would take their Reply off the Ticket the Reporter is reading and leave their
+      // Incident behind with nothing pointing at it. A fresh Ticket is the way to look again.
+      if (ticket.resolvedBy === BY_HUMAN) {
+        return {
+          ok: false,
+          status: 409,
+          message:
+            "A person resolved this Ticket; open a new one rather than replacing their answer",
+        };
+      }
+      const reopened = await store.reopen(ticket.id);
+      track(run(reopened));
+      return { ok: true, ticket: reopened };
     },
 
     async stop() {

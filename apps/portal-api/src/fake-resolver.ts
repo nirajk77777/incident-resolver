@@ -96,7 +96,30 @@ export type FakeResolverOptions = {
    * behind it.
    */
   propose?: { sql: string; reason: string } | undefined;
+  /**
+   * Break the run part-way through, the way a model call that has used up its LangChain
+   * retries or an MCP server that died does. The Ticket must still end closed and escalated
+   * with reason `agent_error`, carrying whatever the run had already reported.
+   */
+  fail?: string | undefined;
+  /**
+   * Never finish. The run yields what it has and then waits for its abort signal, which is
+   * what a model that has stopped answering looks like from here: the portal's run timeout is
+   * the only thing that ends it.
+   */
+  hang?: boolean | undefined;
 };
+
+/**
+ * Never settles until the run is aborted. A `setTimeout` cannot express this — Node clamps a
+ * delay past 2^31 milliseconds and fires it at once — so the abort is the only thing here.
+ */
+function never(signal: AbortSignal | undefined): Promise<never> {
+  return new Promise((_resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason);
+    signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+  });
+}
 
 /** Rejects when the run is aborted, so a cancelled run stops between steps. */
 function pause(ms: number, signal: AbortSignal | undefined): Promise<void> {
@@ -148,6 +171,8 @@ function rejectedVerdict(reason: string): Verdict {
 export function createFakeResolver({
   stepDelayMs = 0,
   propose,
+  fail,
+  hang,
 }: FakeResolverOptions = {}): TicketResolver {
   async function* play(
     events: ResolverEvent[],
@@ -159,17 +184,33 @@ export function createFakeResolver({
     }
   }
 
+  /**
+   * Where a run configured not to finish stops, reached after everything it had to report. A
+   * failure throws for the portal to catch; a hang waits for the abort its run timeout raises.
+   * A fake configured to do neither passes straight through, so both callers can simply reach
+   * this point rather than each asking whether they should.
+   */
+  async function stallIfConfigured(signal: AbortSignal | undefined): Promise<void> {
+    if (fail) throw new Error(fail);
+    if (hang) await never(signal);
+  }
+
   return {
     name: "fake",
 
-    resolve({ ticket, signal }: ResolverRun) {
-      const ending: ResolverEvent[] = propose
-        ? [{ type: "interrupt", action: "apply_data_fix", args: { ...propose } }]
-        : [{ type: "verdict", verdict: FAKE_VERDICT }];
-      return play([...scriptFor(ticket), ...ending], signal);
+    async *resolve({ ticket, signal }: ResolverRun) {
+      yield* play(scriptFor(ticket), signal);
+      await stallIfConfigured(signal);
+      yield* play(
+        propose
+          ? [{ type: "interrupt", action: "apply_data_fix", args: { ...propose } }]
+          : [{ type: "verdict", verdict: FAKE_VERDICT }],
+        signal,
+      );
     },
 
     async *resume({ effects, signal }: ResolverRun, decision: ResolverDecision) {
+      await stallIfConfigured(signal);
       if (decision.decision === "reject") {
         yield* play([{ type: "verdict", verdict: rejectedVerdict(decision.reason ?? "") }], signal);
         return;

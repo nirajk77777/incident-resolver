@@ -136,6 +136,7 @@ describe("Resolver wiring", () => {
         writeEffects: {
           applyDataFix: async () => "not reached",
           sendCustomerReply: async () => "not reached",
+          createPullRequest: async () => "not reached",
         },
         interruptOn: interruptsFor(customerTicket),
       });

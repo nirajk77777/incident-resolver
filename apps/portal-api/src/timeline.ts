@@ -1,5 +1,7 @@
 import type { TicketEventType } from "@incident-resolver/shared";
+import type { TicketEventBus } from "./bus";
 import type { TimelineResolverEvent } from "./resolver";
+import type { PortalStore } from "./store";
 
 /** A `portal.ticket_events` row as the timeline serves it. */
 export type TimelineEntry = {
@@ -38,4 +40,22 @@ export function timelineEntryFor(event: TimelineResolverEvent): {
     case "verdict":
       return { type: event.type, payload: { ...event.verdict } };
   }
+}
+
+/**
+ * Writing one entry onto a Ticket's Timeline: stored, then put on the live wire so whoever is
+ * watching sees it as it happens. The runner writes every Resolver event through this, and the
+ * write effects write the one thing the portal says for itself — the internal note carrying a
+ * pull request link, which a Reporter's Reply is never allowed to name.
+ */
+export type TimelineWriter = (
+  ticketId: string,
+  run: number,
+  entry: { type: TicketEventType; payload: Record<string, unknown> },
+) => Promise<void>;
+
+export function createTimelineWriter(store: PortalStore, bus: TicketEventBus): TimelineWriter {
+  return async (ticketId, run, entry) => {
+    bus.publish(ticketId, await store.appendEvent({ ticketId, run, ...entry }));
+  };
 }

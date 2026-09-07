@@ -127,6 +127,18 @@ function Entry({
           {card.detail && (
             <p className={`mt-2 mb-0 leading-relaxed ${detailFace(card)}`}>{card.detail}</p>
           )}
+          {card.link && (
+            <p className="mt-2 mb-0">
+              <a
+                href={card.link}
+                target="_blank"
+                rel="noreferrer"
+                className="evidence text-accent underline underline-offset-2 [overflow-wrap:anywhere]"
+              >
+                {card.link}
+              </a>
+            </p>
+          )}
           {card.reply && (
             <div className="mt-3">
               <span className="eyebrow">Reply</span>

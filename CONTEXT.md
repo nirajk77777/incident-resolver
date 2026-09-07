@@ -36,8 +36,15 @@ The ordered record of what a Run did to a Ticket: subagent starts and ends, tool
 _Avoid_: log, history, feed, audit trail
 
 **Incident**:
-The distilled record of a closed Ticket written to the knowledge base: symptoms, root cause, and what fixed it. Written for both agent-resolved and human-resolved tickets.
+The distilled record of a closed Ticket written to the knowledge base: symptoms, root cause, and what fixed it. Written for both agent-resolved and human-resolved Tickets, derived from the Verdict or from the Manual resolution rather than by another model call. One Ticket has one Incident: re-running it, or resolving it by hand, replaces the record it wrote before. An escalated Ticket nobody has picked up has none.
 _Avoid_: ticket, case, past issue
+
+**Resolved by**:
+Who settled a Ticket: the agent, when the Resolver reached an Outcome, or a human, when a Reviewer finished an escalated one. An escalated Ticket waiting for a person is resolved by nobody, which is what puts the Manual resolution form on it.
+
+**Manual resolution**:
+What a Reviewer writes to finish an escalated Ticket: the root cause, what fixed it, and the Reply that replaces the holding message. It closes the Ticket and becomes an Incident. The Outcome stays `escalated` — that is how the Ticket ended — and only who resolved it changes.
+_Avoid_: manual close, human fix, override
 
 ### Investigation
 
@@ -70,7 +77,7 @@ The Resolver's structured final output for a Ticket: Outcome, Confidence, root c
 _Avoid_: result, report, summary
 
 **Escalation**:
-Handing a Ticket to a human because Confidence is too low or Evidence conflicts. The human's resolution still becomes an Incident.
+Handing a Ticket to a human. Three things cause one: the Resolver calling the escalate tool, a Verdict whose Confidence is below the threshold, and a Run that never reached a Verdict at all. The Ticket closes with Outcome `escalated`, the holding Reply, and every piece of Evidence the run gathered. The human's Manual resolution still becomes an Incident.
 
 ### Approvals
 
@@ -88,6 +95,10 @@ The Reviewer's verdict on a Proposal: approve, edit, or reject.
 **Data fix**:
 A Proposal to change product data with SQL. Runs only after approval, in a transaction, with a snapshot of affected rows kept for rollback.
 
+**Internal note**:
+Something the portal records on a Ticket for the team rather than for the Reporter, written onto the Timeline. The pull request link is one: the Reply says a fix is underway and never carries it.
+_Avoid_: comment, annotation
+
 ### Agents
 
 **Resolver**:
@@ -99,6 +110,10 @@ A subagent that gathers Evidence from one source: logs, database, or past Incide
 **Code RCA**:
 The subagent that finds and fixes a code bug in the Workspace: it writes a failing test, patches the defect, and runs the tests green. It has no shell and cannot leave the Workspace.
 _Avoid_: code agent, fixer, developer agent
+
+**Fix Shipper**:
+The subagent that takes Code RCA's patch out of the Workspace and pushes it to a branch on ShopLite's repository, named from the Ticket. It writes the pull request but does not open it: that is the Resolver's gated write.
+_Avoid_: shipper, PR agent, publisher
 
 **Sentinel**:
 The watcher that opens Tickets from metrics anomalies. At most one open Ticket per fingerprint of route and error type.

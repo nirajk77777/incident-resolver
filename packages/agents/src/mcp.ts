@@ -1,7 +1,8 @@
 import { createRequire } from "node:module";
 import { dirname } from "node:path";
-import type { Ticket } from "@incident-resolver/shared";
-import { MultiServerMCPClient } from "@langchain/mcp-adapters";
+import type { Config, Ticket } from "@incident-resolver/shared";
+import { MultiServerMCPClient, type StreamableHTTPConnection } from "@langchain/mcp-adapters";
+import { GITHUB, githubConnection } from "./github";
 
 /**
  * The MCP servers the Resolver's subagents use, spawned as stdio child processes the way
@@ -78,10 +79,35 @@ function withoutReporter(env: Env): Record<string, string> {
   return cleaned;
 }
 
-/** Opens the MCP client for a Ticket. Call `getTools()` to start the servers; `close()` when done. */
-export function createMcpClient(ticket: Ticket, env: Env = process.env): MultiServerMCPClient {
+/**
+ * The GitHub connection for this run, or nothing when there is no token to make one with.
+ * The token is a secret and so comes from the environment rather than from config; a portal
+ * running without one still investigates every Ticket, it just cannot ship a code fix.
+ */
+export function githubConnectionFor(
+  github: Config["github"] | undefined,
+  env: Env,
+): StreamableHTTPConnection | undefined {
+  const token = env.GITHUB_TOKEN;
+  if (!github || !token) return undefined;
+  return githubConnection({ url: github.mcpUrl, token, toolsets: github.toolsets });
+}
+
+/**
+ * Opens the MCP client for a Ticket. Call `getTools()` to start the servers; `close()` when done.
+ *
+ * `github` is the settings from config, and it is left out by a caller that has no token for
+ * it — the command line, or a portal running without one. Such a run has no GitHub server,
+ * which is a run with no Fix Shipper and nowhere to open a pull request.
+ */
+export function createMcpClient(
+  ticket: Ticket,
+  env: Env = process.env,
+  github?: Config["github"] | undefined,
+): MultiServerMCPClient {
+  const remote = githubConnectionFor(github, env);
   return new MultiServerMCPClient({
-    mcpServers: mcpConnections(ticket, env),
+    mcpServers: { ...mcpConnections(ticket, env), ...(remote ? { [GITHUB]: remote } : {}) },
     throwOnLoadError: true,
     prefixToolNameWithServerName: false,
     additionalToolNamePrefix: "",

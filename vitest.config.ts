@@ -22,11 +22,12 @@ export default defineConfig({
           name: "integration",
           include: [integrationGlob],
           exclude: [...configDefaults.exclude, worktreesGlob],
+          // One file at a time. They share one Postgres — and the demo reset empties it, so
+          // running two at once has one file clearing tables another is mid-request against —
+          // and one Cohere key, whose trial tier allows ten calls a minute.
+          fileParallelism: false,
           testTimeout: 30_000,
           hookTimeout: 60_000,
-          // Every integration file drives the same Postgres, and the demo reset clears it,
-          // so running two at once has one file emptying tables another is mid-run against.
-          fileParallelism: false,
         },
       },
     ],

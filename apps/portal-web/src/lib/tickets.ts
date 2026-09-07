@@ -3,8 +3,10 @@ import type {
   Decision,
   EvidenceReference,
   IncidentCategory,
+  ManualResolutionInput,
   Outcome,
   Proposal,
+  ResolvedBy,
   ReviewerDecision,
   TicketEventType,
   TicketSource,
@@ -22,8 +24,10 @@ export type {
   Decision,
   EvidenceReference,
   IncidentCategory,
+  ManualResolutionInput,
   Outcome,
   Proposal,
+  ResolvedBy,
   ReviewerDecision,
   TicketEventType,
   TicketSource,
@@ -98,6 +102,18 @@ export type TimelineEntry = {
 /** A run is over when the Ticket is closed; everything before that is still moving. */
 export function isRunning(ticket: Pick<Ticket, "status">): boolean {
   return ticket.status !== "closed";
+}
+
+/**
+ * Whether an escalation left this Ticket for a person to finish, which is what puts the manual
+ * resolution form on it. `@incident-resolver/shared` states the same rule for the portal, and
+ * it is restated rather than imported: importing a value from that package would pull its
+ * database client into the browser bundle, which is why everything else here is a type import.
+ */
+export function awaitsManualResolution(
+  ticket: Pick<Ticket, "status" | "outcome" | "resolvedBy">,
+): boolean {
+  return ticket.status === "closed" && ticket.outcome === "escalated" && ticket.resolvedBy === null;
 }
 
 const statusLabels: Record<TicketStatus, string> = {

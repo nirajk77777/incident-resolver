@@ -2,7 +2,7 @@ import { AIMessage, HumanMessage, ToolMessage } from "@langchain/core/messages";
 import { describe, expect, it } from "vitest";
 import { createProcedureGuard, delegationRefusal, FOCUS_HEADING, withTriageFocus } from "./guard";
 import type { Triage } from "./schemas";
-import { CODE_RCA, investigators } from "./subagents";
+import { CODE_RCA, FIX_SHIPPER, investigators } from "./subagents";
 
 const question: Triage = {
   category: "question",
@@ -27,10 +27,12 @@ const dataIssue: Triage = {
   bestHelpArticle: null,
 };
 
-/** The procedure as a run without a Workspace sees it: no Code RCA to delegate to. */
-const procedure = { confidenceThreshold: 0.6, codeRca: false };
-/** The same run with a Workspace, which is what makes Code RCA one of the subagents. */
-const withCodeRca = { confidenceThreshold: 0.6, codeRca: true };
+/** The procedure as a run with neither a Workspace nor GitHub sees it: neither subagent exists. */
+const procedure = { confidenceThreshold: 0.6, codeRca: false, fixShipper: false };
+/** The same run with both, which is what makes Code RCA and the Fix Shipper subagents. */
+const withCodeRca = { confidenceThreshold: 0.6, codeRca: true, fixShipper: true };
+/** A Workspace but no GitHub token: the bug can be found and the fix cannot be shipped. */
+const withoutGithub = { confidenceThreshold: 0.6, codeRca: true, fixShipper: false };
 
 const task = (subagent: string, id = "call") => ({
   id,
@@ -276,6 +278,57 @@ describe("delegating to Code RCA", () => {
 
     expect(delegationRefusal(task(CODE_RCA, "again"), messages, withCodeRca)).toMatch(
       /code-rca subagent has already run/,
+    );
+  });
+});
+
+/** The run as it stands once Code RCA has reported: the patch is in the Workspace. */
+function afterCodeRca(triage: Triage) {
+  return [
+    ...afterInvestigation(triage),
+    new AIMessage({ content: "", tool_calls: [task(CODE_RCA, "rca")] }),
+    new ToolMessage({ tool_call_id: "rca", name: "task", content: "{}" }),
+  ];
+}
+
+describe("delegating to the Fix Shipper", () => {
+  it("is not a subagent at all on a run with no GitHub server", () => {
+    expect(delegationRefusal(task(FIX_SHIPPER), afterCodeRca(dataIssue), withoutGithub)).toMatch(
+      /no subagent named fix-shipper/,
+    );
+  });
+
+  it("pushes once Code RCA has reported", () => {
+    expect(
+      delegationRefusal(task(FIX_SHIPPER), afterCodeRca(dataIssue), withCodeRca),
+    ).toBeUndefined();
+  });
+
+  it("waits for the patch: Code RCA has not reported yet", () => {
+    expect(
+      delegationRefusal(task(FIX_SHIPPER), afterInvestigation(dataIssue), withCodeRca),
+    ).toMatch(/wait for Code RCA/);
+  });
+
+  it("waits for the patch: Code RCA was launched but has not answered", () => {
+    const launched = [
+      ...afterInvestigation(dataIssue),
+      new AIMessage({ content: "", tool_calls: [task(CODE_RCA, "rca")] }),
+    ];
+    expect(delegationRefusal(task(FIX_SHIPPER), launched, withCodeRca)).toMatch(
+      /wait for Code RCA/,
+    );
+  });
+
+  it("pushes at most once, like every other subagent", () => {
+    const messages = [
+      ...afterCodeRca(dataIssue),
+      new AIMessage({ content: "", tool_calls: [task(FIX_SHIPPER, "ship")] }),
+      new ToolMessage({ tool_call_id: "ship", name: "task", content: "{}" }),
+    ];
+
+    expect(delegationRefusal(task(FIX_SHIPPER, "again"), messages, withCodeRca)).toMatch(
+      /fix-shipper subagent has already run/,
     );
   });
 });

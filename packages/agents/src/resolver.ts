@@ -7,15 +7,25 @@ import { type BaseCheckpointSaver, Command } from "@langchain/langgraph";
 import { createDeepAgent } from "deepagents";
 import type { ActionRequest, Decision, HITLResponse, InterruptOnConfig } from "langchain";
 import { toolStrategy } from "langchain";
+import { createCodeRcaSubagent, createWorkspaceProvisioner } from "./code-rca";
+import { createEscalationTool, escalationRequested } from "./escalate";
+import { createFixShipperSubagent } from "./fix-shipper";
 import {
-  createCodeRcaSubagent,
-  createWorkspaceProvisioner,
-  workspaceBackend,
-  workspaceClosed,
-} from "./code-rca";
+  branchNameFor,
+  createPullRequestOpener,
+  GITHUB_PULL_REQUEST_TOOL,
+  type GithubRepo,
+  githubToolNames,
+} from "./github";
 import { createProcedureGuard } from "./guard";
 import type { Models } from "./models";
-import { applyConfidencePolicy, investigationWarnings, isFastPath, ranInParallel } from "./policy";
+import {
+  endingWarnings,
+  investigationWarnings,
+  isFastPath,
+  ranInParallel,
+  settleVerdict,
+} from "./policy";
 import { type Prompts, promptVersions } from "./prompts";
 import { summarizeRun } from "./run-summary";
 import type { Triage } from "./schemas";
@@ -25,10 +35,12 @@ import {
   createLogInvestigatorSubagent,
   createTriageSubagent,
   investigators,
+  selectTool,
 } from "./subagents";
 import { createToolErrorGuard } from "./tool-errors";
 import type { Workspace } from "./workspace";
-import { createWriteTools, type WriteEffects } from "./write-tools";
+import { workspaceBackend, workspaceClosed } from "./workspace-mount";
+import { createWriteTools, noGithubOpener, type WriteEffects } from "./write-tools";
 
 export type ResolverOptions = {
   config: Config;
@@ -49,6 +61,20 @@ export type ResolverOptions = {
    * with, which is a run that can describe a code bug but not fix one.
    */
   workspace?: Workspace | undefined;
+  /**
+   * GitHub, when this run has a token for it. This is what gives the run a Fix Shipper to push
+   * the patch with and something for `create_pull_request` to open the pull request on. Left
+   * out when no token is configured, and the Resolver can then confirm a code bug but not ship
+   * the fix, which is a run that escalates with the patch still in the Workspace.
+   */
+  github?: GithubOptions | undefined;
+};
+
+export type GithubOptions = {
+  /** The repository the branch and the pull request are aimed at. */
+  repo: GithubRepo;
+  /** The branch the pull request is opened against: ShopLite's default branch. */
+  base: string;
 };
 
 /**
@@ -67,7 +93,8 @@ const RECURSION_LIMIT = 60;
  *
  * The Resolver's own tools are the writes, and every one of them is behind the gate: the graph
  * interrupts before the tool runs, and only a Reviewer's Decision lets it through. The
- * checkpointer is what makes that possible, since a paused thread is resumed from it.
+ * checkpointer is what makes that possible, since a paused thread is resumed from it. The one
+ * tool beside them is `escalate_to_human`, which writes nothing and so needs no Reviewer.
  */
 export function createResolver({
   config,
@@ -78,6 +105,7 @@ export function createResolver({
   writeEffects,
   interruptOn,
   workspace,
+  github,
 }: ResolverOptions) {
   const investigator = { model: models.investigator, tools, prompts };
   // Empty on a run with no Workspace, which is what leaves the Resolver with nothing to
@@ -85,11 +113,44 @@ export function createResolver({
   const codeRcaSubagent = workspace
     ? [createCodeRcaSubagent({ model: models.codeRca, prompts, workspace })]
     : [];
+  // Shipping a fix needs three things: the Workspace the patch is in, GitHub to push it to,
+  // and the GitHub tools actually loaded. The last is checked rather than assumed because
+  // GITHUB_MCP_TOOLSETS decides what the remote server exposes: a portal configured without
+  // the pull requests toolset would otherwise fail to build a Resolver at all, and a Question
+  // answered from a Help article would break on a setting it never touches. Missing any of
+  // the three, the run has no Fix Shipper and nothing to open a pull request with, which is
+  // the same run a portal with no token has: it escalates with the patch in the Workspace.
+  const shipping =
+    workspace && github && githubToolNames.every((name) => has(tools, name))
+      ? { workspace, github, branch: branchNameFor(workspace.ticketId) }
+      : undefined;
+  const fixShipperSubagent = shipping
+    ? [
+        createFixShipperSubagent({
+          model: models.fixShipper,
+          prompts,
+          workspace: shipping.workspace,
+          tools,
+          repo: shipping.github.repo,
+          base: shipping.github.base,
+          branch: shipping.branch,
+        }),
+      ]
+    : [];
+  // The one call that reaches GitHub, and the only thing behind the gate's create_pull_request.
+  const openPullRequest = shipping
+    ? createPullRequestOpener({
+        tool: selectTool(tools, GITHUB_PULL_REQUEST_TOOL),
+        repo: shipping.github.repo,
+        base: shipping.github.base,
+        branch: shipping.branch,
+      })
+    : noGithubOpener;
   return createDeepAgent({
     name: "resolver",
     model: models.resolver,
     systemPrompt: prompts.text("resolver"),
-    tools: createWriteTools(writeEffects),
+    tools: [...createWriteTools(writeEffects, openPullRequest), createEscalationTool()],
     interruptOn,
     // The Workspace is mounted on the agent's filesystem and closed to everyone here: Code RCA
     // declares its own permissions and is the only agent let in (ADR-0002). Without a Workspace
@@ -102,6 +163,7 @@ export function createResolver({
       createDataInvestigatorSubagent(investigator),
       createIncidentHistorianSubagent(investigator),
       ...codeRcaSubagent,
+      ...fixShipperSubagent,
     ],
     // The error guard is outermost: an Investigator that dies comes back as a task tool error
     // the Resolver can decide around, rather than ending the run. The provisioner is innermost,
@@ -111,6 +173,7 @@ export function createResolver({
       createProcedureGuard({
         confidenceThreshold: config.confidenceThreshold,
         codeRca: workspace !== undefined,
+        fixShipper: shipping !== undefined,
       }),
       ...(workspace ? [createWorkspaceProvisioner(workspace)] : []),
     ],
@@ -118,6 +181,9 @@ export function createResolver({
     checkpointer,
   });
 }
+
+/** Whether the MCP client loaded a tool by this name. */
+const has = (tools: StructuredTool[], name: string) => tools.some((tool) => tool.name === name);
 
 export type Resolver = ReturnType<typeof createResolver>;
 
@@ -312,8 +378,12 @@ function reportFor(result: FinalState, options: ResolveOptions): RunReport {
   if (!parsed.success) {
     throw new Error(`The Resolver did not end with a Verdict: ${parsed.error.message}`);
   }
-  const verdict = applyConfidencePolicy(parsed.data, config.confidenceThreshold);
   const summary = summarizeRun(result.messages);
+  const ending = {
+    confidenceThreshold: config.confidenceThreshold,
+    escalationAsked: escalationRequested(result.messages),
+  };
+  const verdict = settleVerdict(parsed.data, ending);
   const { triage, subagentsInvoked } = summary;
   const investigated = investigators.some((name) => subagentsInvoked.includes(name));
   const qualifiedForFastPath =
@@ -324,11 +394,7 @@ function reportFor(result: FinalState, options: ResolveOptions): RunReport {
     warnings.push("The Resolver did not run Triage, or Triage returned no structured output");
   }
   warnings.push(...investigationWarnings(summary));
-  if (verdict.outcome !== parsed.data.outcome) {
-    warnings.push(
-      `Confidence ${verdict.confidence} is below the threshold ${config.confidenceThreshold}: outcome ${parsed.data.outcome} was escalated`,
-    );
-  }
+  warnings.push(...endingWarnings(parsed.data, verdict, ending));
 
   return {
     ticketId: ticket.id,
