@@ -110,6 +110,10 @@ services:
     build: .
     working_dir: /app/apps/sentinel
     command: ["node", "--import", "tsx", "src/main.ts"]
+    # The image's HEALTHCHECK probes the portal's /api/health, which this process does not
+    # serve; without this the Sentinel is reported unhealthy forever while working fine.
+    healthcheck:
+      disable: true
     environment:
       PROMETHEUS_URL: http://lgtm:9090
       LOKI_URL: http://lgtm:3100
