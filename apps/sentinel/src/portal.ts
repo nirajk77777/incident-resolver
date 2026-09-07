@@ -1,4 +1,4 @@
-import type { NewTicket } from "@incident-resolver/shared";
+import { joinUrl, type NewTicket } from "@incident-resolver/shared";
 
 /**
  * How Sentinel opens a Ticket: over the portal's own HTTP surface, the same one the
@@ -21,7 +21,7 @@ export type PortalClient = {
 export function createPortalClient(baseUrl: string): PortalClient {
   return {
     async openTicket(ticket) {
-      const response = await fetch(new URL("/tickets", baseUrl), {
+      const response = await fetch(joinUrl(baseUrl, "/tickets"), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(ticket),

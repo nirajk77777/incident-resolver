@@ -3,6 +3,7 @@ import {
   type Config,
   type Db,
   incidents,
+  joinUrl,
   messageOf,
   type ResetReport,
   type ResetStep,
@@ -114,7 +115,7 @@ async function postToShoplite(
   path: string,
   body: unknown,
 ): Promise<{ status: number; body: unknown }> {
-  const response = await fetch(new URL(path, config.shopliteApiUrl), {
+  const response = await fetch(joinUrl(config.shopliteApiUrl, path), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body ?? {}),

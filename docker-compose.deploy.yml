@@ -1,0 +1,138 @@
+# The whole system as one stack: Postgres, LGTM, ShopLite, the portal, and the Sentinel.
+#
+# docker-compose.yml stays what it is — the infrastructure `pnpm dev` runs against on a
+# laptop. This file is the deployed shape, where every application is a container too and
+# reaches the others by service name. It is what Coolify's Docker Compose build pack deploys.
+#
+# Two images. ShopLite builds from its own repository (ADR-0001) at deploy time, so there is
+# no registry to publish to. Everything in this repository builds from the root Dockerfile:
+# the portal, which serves its own pages and so answers under /api, and the Sentinel, which
+# is the same image started on a different command.
+#
+# No ports are published. Coolify routes a domain to shoplite, to portal, and to Grafana on
+# lgtm; everything else — Postgres and LGTM's unauthenticated OTLP, Loki, Tempo, and
+# Prometheus — is reachable only from inside the stack.
+
+name: incident-resolver
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.6-pg16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: incident_resolver
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d incident_resolver"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  lgtm:
+    image: grafana/otel-lgtm:0.32.1
+    volumes:
+      - lgtm-grafana:/data/grafana
+      - lgtm-prometheus:/data/prometheus
+      - lgtm-loki:/data/loki
+      # The dashboard from this repository, provisioned the same way compose does locally.
+      - ./infra/grafana/provisioning/dashboards/shoplite.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/shoplite.yaml:ro
+      - ./infra/grafana/dashboards:/otel-lgtm/grafana/dashboards/shoplite:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:3000/api/health && curl -sf http://localhost:3100/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    restart: unless-stopped
+
+  shoplite:
+    build:
+      context: ${SHOPLITE_REPO_URL:-https://github.com/nirajk77777/shoplite.git}
+    environment:
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/incident_resolver
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://lgtm:4318
+      OTEL_SERVICE_NAME: ${SHOPLITE_SERVICE_NAME:-shoplite-api}
+      # The storefront's /portal/* calls, forwarded by the ShopLite container itself.
+      PORTAL_API_URL: http://portal:5000/api
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      # First boot against an empty database only: this truncates every ShopLite table.
+      SEED_ON_START: ${SHOPLITE_SEED_ON_START:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      lgtm:
+        condition: service_healthy
+      # Both migrators create the shoplite schema, and Postgres's IF NOT EXISTS is not safe
+      # against two doing it at the same instant. The portal goes first, as it does in
+      # `pnpm setup` on a laptop; ShopLite's own migration then finds the schema in place.
+      portal:
+        condition: service_healthy
+    restart: unless-stopped
+
+  portal:
+    build: .
+    environment:
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/incident_resolver
+      SHOPLITE_READONLY_DATABASE_URL: postgres://shoplite_reader:shoplite_reader@postgres:5432/incident_resolver
+      SHOPLITE_WRITE_DATABASE_URL: postgres://shoplite_writer:shoplite_writer@postgres:5432/incident_resolver
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://lgtm:4318
+      LOKI_URL: http://lgtm:3100
+      TEMPO_URL: http://lgtm:3200
+      PROMETHEUS_URL: http://lgtm:9090
+      # Opened by a person in a browser, so this one is Grafana's public address.
+      GRAFANA_URL: ${GRAFANA_URL:-http://localhost:3000}
+      SHOPLITE_API_URL: http://shoplite:4000/api
+      PORTAL_API_URL: http://portal:5000/api
+      # `fake` runs the scripted Resolver and needs no model. `real` needs the keys below.
+      RESOLVER: ${RESOLVER:-fake}
+      SHOPLITE_REPO_URL: ${SHOPLITE_REPO_URL:-https://github.com/nirajk77777/shoplite.git}
+      SHOPLITE_SERVICE_NAME: ${SHOPLITE_SERVICE_NAME:-shoplite-api}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      COHERE_API_KEY: ${COHERE_API_KEY:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-https://cloud.langfuse.com}
+    volumes:
+      # Per-Ticket ShopLite clones. A volume so a restart does not re-clone every open Ticket.
+      - workspaces:/workspaces
+    depends_on:
+      postgres:
+        condition: service_healthy
+      lgtm:
+        condition: service_healthy
+    restart: unless-stopped
+
+  sentinel:
+    build: .
+    working_dir: /app/apps/sentinel
+    command: ["node", "--import", "tsx", "src/main.ts"]
+    environment:
+      PROMETHEUS_URL: http://lgtm:9090
+      LOKI_URL: http://lgtm:3100
+      PORTAL_API_URL: http://portal:5000/api
+      SHOPLITE_SERVICE_NAME: ${SHOPLITE_SERVICE_NAME:-shoplite-api}
+      SENTINEL_ERROR_RATIO: ${SENTINEL_ERROR_RATIO:-}
+      SENTINEL_WINDOW_SECONDS: ${SENTINEL_WINDOW_SECONDS:-}
+      SENTINEL_MIN_REQUESTS: ${SENTINEL_MIN_REQUESTS:-}
+      SENTINEL_POLL_INTERVAL_MS: ${SENTINEL_POLL_INTERVAL_MS:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-https://cloud.langfuse.com}
+    depends_on:
+      lgtm:
+        condition: service_healthy
+      portal:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  lgtm-grafana:
+  lgtm-prometheus:
+  lgtm-loki:
+  workspaces:

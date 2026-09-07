@@ -1,0 +1,11 @@
+node_modules
+**/node_modules
+.git
+.env
+.env.*
+!.env.example
+# Per-Ticket ShopLite clones. Big, disposable, and recreated at runtime.
+workspaces
+**/dist
+**/*.log
+.DS_Store

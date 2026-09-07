@@ -45,6 +45,10 @@ const configSchema = z
     PORTAL_API_URL: z.url().default("http://127.0.0.1:5000"),
     // Pause between the fake Resolver's events, so its timeline arrives one card at a time.
     FAKE_RESOLVER_STEP_DELAY_MS: z.coerce.number().int().min(0).default(400),
+    // The built portal-web, for portal-api to serve itself. Unset on a laptop, where the Vite
+    // dev server serves the pages; set in the deployed container, where there is no Vite.
+    // Serving the pages moves the API under /api, so PORTAL_API_URL then ends in /api too.
+    PORTAL_WEB_DIST_DIR: z.string().min(1).optional(),
 
     // An approved data fix that would touch more rows than this is refused.
     DATA_FIX_ROW_CAP: count().default(100),
@@ -134,6 +138,7 @@ const configSchema = z
       host: env.PORTAL_API_HOST,
       url: env.PORTAL_API_URL,
       fakeResolverStepDelayMs: env.FAKE_RESOLVER_STEP_DELAY_MS,
+      webDistDir: env.PORTAL_WEB_DIST_DIR,
     },
     dataFixRowCap: env.DATA_FIX_ROW_CAP,
     queryRowCap: env.QUERY_ROW_CAP,

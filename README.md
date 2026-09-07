@@ -101,6 +101,43 @@ pnpm lint
 pnpm typecheck
 ```
 
+## Deploying
+
+`docker-compose.deploy.yml` is the whole system as one stack — Postgres, LGTM, ShopLite, the
+portal, and the Sentinel — for a host that runs Docker Compose, which is what Coolify's Docker
+Compose build pack does. `docker-compose.yml` stays the laptop's infrastructure for `pnpm dev`.
+
+Two images. ShopLite builds from its own repository at deploy time (ADR-0001), so there is
+no registry to publish to. Everything here builds from the root `Dockerfile`: the portal,
+and the Sentinel as the same image on a different command. The portal container serves the
+built portal-web itself and so mounts its API under `/api` — the job the Vite dev server does
+on a laptop — which is why `PORTAL_API_URL` and `SHOPLITE_API_URL` end in `/api` inside the
+stack. Its entrypoint applies migrations, then starts; ShopLite waits for it, because both
+migrators create the `shoplite` schema and Postgres's `IF NOT EXISTS` is not safe against
+two doing it at the same instant.
+
+No ports are published. Give a domain to `shoplite`, to `portal`, and to Grafana on `lgtm`;
+Postgres and LGTM's unauthenticated OTLP, Loki, Tempo and Prometheus ports stay reachable only
+from inside the stack, which is what keeps them safe without a client-side credential.
+
+On Coolify: a new resource from this repository with the **Docker Compose** build pack and
+`docker-compose.deploy.yml` as the compose file. Then, in its environment: `POSTGRES_PASSWORD`,
+`RESOLVER=real`, `OPENAI_API_KEY`, `COHERE_API_KEY`, `GITHUB_TOKEN`, the two Langfuse keys, and
+`GRAFANA_URL` set to the domain Grafana gets. Add `SHOPLITE_SEED_ON_START=true` for the first
+deploy only — it truncates every ShopLite table — and remove it afterwards. Everything else has
+a default in the compose file.
+
+To run the same stack on a laptop, add the ports back with an override:
+
+```bash
+docker compose -f docker-compose.deploy.yml -f - up --build <<'EOF'
+services:
+  shoplite: { ports: ["4000:4000"], environment: { SEED_ON_START: "true" } }
+  portal:   { ports: ["5000:5000"] }
+  lgtm:     { ports: ["3000:3000"] }
+EOF
+```
+
 ## Layout
 
 ```

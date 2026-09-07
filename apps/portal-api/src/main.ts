@@ -15,7 +15,19 @@ const scores = createScoreWriter({
   secretKey: process.env.LANGFUSE_SECRET_KEY,
   baseUrl: config.infra.langfuseBaseUrl,
 });
-const app = createPortalApi({ db, config, resolver, scores, logger: true });
+// With PORTAL_WEB_DIST_DIR set this process is the whole portal, so the API moves under
+// /api to leave the root for the pages. Without it, it is the API alone at the root and the
+// Vite dev server serves the pages next to it.
+const webDistDir = config.portal.webDistDir;
+const app = createPortalApi({
+  db,
+  config,
+  resolver,
+  scores,
+  logger: true,
+  apiPrefix: webDistDir ? "/api" : "",
+  webDistDir,
+});
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, () => {

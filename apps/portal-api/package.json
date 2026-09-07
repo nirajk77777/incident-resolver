@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@fastify/static": "^10.1.3",
     "@incident-resolver/agents": "workspace:*",
     "@incident-resolver/mcp-database": "workspace:*",
     "@incident-resolver/mcp-incidents": "workspace:*",

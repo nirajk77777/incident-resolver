@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { getConfig, messageOf, newTicketSchema } from "@incident-resolver/shared";
+import { getConfig, joinUrl, messageOf, newTicketSchema } from "@incident-resolver/shared";
 import {
   type ClosedTicket,
   type Mark,
@@ -38,7 +38,7 @@ const pollIntervalMs = 1_000;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function portalJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(new URL(path, portal), init);
+  const response = await fetch(joinUrl(portal, path), init);
   const body = (await response.json().catch(() => null)) as (T & { message?: string }) | null;
   if (!response.ok) {
     throw new Error(`${init?.method ?? "GET"} ${path}: ${response.status} ${body?.message ?? ""}`);

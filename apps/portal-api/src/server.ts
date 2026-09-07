@@ -30,6 +30,7 @@ import {
 } from "./sse";
 import { createPortalStore } from "./store";
 import { createTimelineWriter, type TimelineEntry } from "./timeline";
+import { servePortalWeb } from "./web";
 import { createWriteEffects } from "./write-effects";
 
 export type PortalApiOptions = {
@@ -52,6 +53,14 @@ export type PortalApiOptions = {
    */
   cohereApiKey?: string | undefined;
   logger?: boolean;
+  /**
+   * Where the routes are mounted. Empty — the default, and what tests use — puts them at the
+   * root, behind the Vite dev server's `/api` proxy. The deployed container passes `/api`,
+   * because there the portal's pages are served from this same origin at the root.
+   */
+  apiPrefix?: string;
+  /** Serve the built portal-web from here too. Omitted and this process is the API alone. */
+  webDistDir?: string;
 };
 
 const ticketIdSchema = z.object({ id: z.uuid() });
@@ -115,19 +124,29 @@ function approvalBody(approval: ApprovalRecord) {
  * Creating a Ticket starts its run, so a client can be watching the stream before the first
  * entry lands and still see everything: the stream always replays what it missed.
  */
-export function createPortalApi({
-  db,
-  config,
-  resolver,
-  demo = createDemo({ db, config }),
-  scores = noScores,
-  incidents,
-  cohereApiKey = process.env.COHERE_API_KEY,
-  logger = false,
-}: PortalApiOptions): FastifyInstance {
+export function createPortalApi(options: PortalApiOptions): FastifyInstance {
+  const { logger = false, apiPrefix = "", webDistDir } = options;
   // The portal holds SSE connections open for as long as a Ticket is watched, so shutdown
   // closes its sockets rather than waiting on them.
   const app = Fastify({ logger, forceCloseConnections: true });
+  app.register(portalRoutes, { ...options, prefix: apiPrefix });
+  if (webDistDir) servePortalWeb(app, { webDistDir, apiPrefix });
+  return app;
+}
+
+/** The routes themselves, as a plugin so `createPortalApi` can mount them under a prefix. */
+async function portalRoutes(
+  app: FastifyInstance,
+  {
+    db,
+    config,
+    resolver,
+    demo = createDemo({ db, config }),
+    scores = noScores,
+    incidents,
+    cohereApiKey = process.env.COHERE_API_KEY,
+  }: PortalApiOptions,
+): Promise<void> {
   const store = createPortalStore(db);
   const bus = createTicketEventBus();
   const dataFix = createDataFixRunner({
@@ -388,6 +407,4 @@ export function createPortalApi({
       close();
     }
   });
-
-  return app;
 }
