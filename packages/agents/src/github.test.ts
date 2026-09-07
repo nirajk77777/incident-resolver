@@ -2,7 +2,6 @@ import type { ToolCall } from "@langchain/core/messages/tool";
 import { describe, expect, it } from "vitest";
 import {
   branchNameFor,
-  CREATE_BRANCH,
   createPullRequestOpener,
   githubConnection,
   openedPullRequestOf,
@@ -93,25 +92,6 @@ describe("withFixedTarget", () => {
       branch: "fix/ticket-1",
       message: "fix",
       files: [{ path: "a.ts", content: "x" }],
-    });
-  });
-
-  it("cuts the branch from the default branch, so the pull request carries only the patch", () => {
-    const fixed = withFixedTarget(
-      call(CREATE_BRANCH, {
-        owner: "x",
-        repo: "y",
-        branch: "whatever",
-        from_branch: "someones-wip",
-      }),
-      target,
-    );
-
-    expect(fixed.args).toEqual({
-      owner: "nirajk77777",
-      repo: "shoplite",
-      branch: "fix/ticket-1",
-      from_branch: "main",
     });
   });
 

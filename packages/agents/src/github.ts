@@ -22,7 +22,6 @@ import type { OpenPullRequest, PullRequestOpened, PullRequestRequest } from "./w
 /** The MCP server's name, as the client's map of servers keys it. */
 export const GITHUB = "github";
 
-export const CREATE_BRANCH = "create_branch";
 export const PUSH_FILES = "push_files";
 /**
  * The remote server's own tool, which only `createPullRequestOpener` below ever calls. It is
@@ -31,8 +30,13 @@ export const PUSH_FILES = "push_files";
  */
 export const GITHUB_PULL_REQUEST_TOOL = "create_pull_request";
 
-/** What the Fix Shipper gets: a branch to put the patch on, and the push that puts it there. */
-export const fixShipperGithubToolNames = [CREATE_BRANCH, PUSH_FILES] as const;
+/**
+ * What the Fix Shipper gets: the one call that puts the patch on GitHub. `push_files` cuts
+ * this Ticket's branch from the repository's default branch when it is not there yet and
+ * pushes onto it when it is, so there is no separate `create_branch` step — there was one,
+ * and a model that issued both in the same turn had them race each other for the ref.
+ */
+export const fixShipperGithubToolNames = [PUSH_FILES] as const;
 
 /** Every GitHub tool a run needs before it can ship a fix at all. */
 export const githubToolNames = [...fixShipperGithubToolNames, GITHUB_PULL_REQUEST_TOOL] as const;
@@ -40,10 +44,13 @@ export const githubToolNames = [...fixShipperGithubToolNames, GITHUB_PULL_REQUES
 /** One GitHub repository. */
 export type GithubRepo = { owner: string; repo: string };
 
-/** Where the Fix Shipper is allowed to push: one repository, one branch, cut from one base. */
+/** Where the Fix Shipper is allowed to push: one repository, one branch, onto one base. */
 export type PushTarget = GithubRepo & {
   branch: string;
-  /** The branch the new one is cut from, and the one the pull request is opened against. */
+  /**
+   * The branch the pull request is opened against. `push_files` cuts a missing branch from
+   * the repository's default branch, which is what this names in every configuration.
+   */
   base: string;
 };
 
@@ -112,15 +119,10 @@ export function githubConnection({
  * One GitHub call, aimed at this Ticket's branch of ShopLite. Every part of where the call
  * goes is the portal's to decide, so all of it is overwritten rather than validated: a model
  * that names another repository pushes to this one, and the prompt is left to say what the
- * call is for rather than to be the thing that keeps it in bounds. `create_branch` has its
- * base fixed too, or the branch could be cut from anywhere in the repository and the pull
- * request would carry whatever else was on it.
+ * call is for rather than to be the thing that keeps it in bounds.
  */
 export function withFixedTarget(toolCall: ToolCall, target: PushTarget): ToolCall {
-  const { owner, repo, branch, base } = target;
-  if (toolCall.name === CREATE_BRANCH) {
-    return { ...toolCall, args: { ...toolCall.args, owner, repo, branch, from_branch: base } };
-  }
+  const { owner, repo, branch } = target;
   if (toolCall.name === PUSH_FILES) {
     return { ...toolCall, args: { ...toolCall.args, owner, repo, branch } };
   }

@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { GIT_DIFF_NAMES, RUN_TESTS } from "./code-tools";
 import { createFixShipperSubagent } from "./fix-shipper";
-import { CREATE_BRANCH, fixShipperGithubToolNames, PUSH_FILES } from "./github";
+import { fixShipperGithubToolNames, PUSH_FILES } from "./github";
 import { loadPrompt, type Prompts } from "./prompts";
 import { FIX_SHIPPER } from "./subagents";
 import type { Workspace } from "./workspace";
@@ -45,11 +45,7 @@ const subagent = () =>
 describe("the Fix Shipper subagent", () => {
   it("lists what changed and pushes it, and can do nothing else", () => {
     expect(subagent().name).toBe(FIX_SHIPPER);
-    expect(subagent().tools?.map((one) => one.name)).toEqual([
-      GIT_DIFF_NAMES,
-      CREATE_BRANCH,
-      PUSH_FILES,
-    ]);
+    expect(subagent().tools?.map((one) => one.name)).toEqual([GIT_DIFF_NAMES, PUSH_FILES]);
   });
 
   it("does not get run_tests: the suite was Code RCA's to run, in the Workspace", () => {
@@ -74,7 +70,7 @@ describe("the Fix Shipper subagent", () => {
         base: "main",
         branch,
       }),
-    ).toThrow(/create_branch/);
+    ).toThrow(/push_files/);
   });
 
   it("aims every push at this Ticket's branch of the configured repository", async () => {
@@ -112,7 +108,6 @@ describe("the Fix Shipper prompt", () => {
 
     expect(prompt).toContain(WORKSPACE_ROUTE);
     expect(prompt).toContain(GIT_DIFF_NAMES);
-    expect(prompt).toContain(CREATE_BRANCH);
     expect(prompt).toContain(PUSH_FILES);
   });
 
