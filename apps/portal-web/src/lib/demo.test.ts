@@ -9,6 +9,7 @@ const chord = (over: Partial<KeyboardEvent> = {}) =>
     metaKey: false,
     shiftKey: false,
     key: "d",
+    code: "KeyD",
     ...over,
   }) as KeyboardEvent;
 
@@ -18,12 +19,17 @@ describe("isDemoShortcut", () => {
     expect(isDemoShortcut(chord({ key: "D" }))).toBe(true);
   });
 
+  it("is Control and Option and D on a Mac, where Option turns the character into ∂", () => {
+    expect(isDemoShortcut(chord({ key: "∂" }))).toBe(true);
+  });
+
   it("is not any near miss, so ordinary typing never opens the panel", () => {
     expect(isDemoShortcut(chord({ ctrlKey: false }))).toBe(false);
     expect(isDemoShortcut(chord({ altKey: false }))).toBe(false);
     expect(isDemoShortcut(chord({ shiftKey: true }))).toBe(false);
     expect(isDemoShortcut(chord({ metaKey: true }))).toBe(false);
-    expect(isDemoShortcut(chord({ key: "f" }))).toBe(false);
+    expect(isDemoShortcut(chord({ key: "f", code: "KeyF" }))).toBe(false);
+    expect(isDemoShortcut(chord({ key: "ƒ", code: "KeyF" }))).toBe(false);
   });
 });
 

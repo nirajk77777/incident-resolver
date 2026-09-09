@@ -10,7 +10,7 @@ import type { ResetReport } from "@incident-resolver/shared";
 /** Ctrl + Alt + D. Control and Option on a Mac, and bound by no browser on either. */
 export const DEMO_SHORTCUT = "Ctrl + Alt + D";
 
-type Chord = Pick<KeyboardEvent, "ctrlKey" | "altKey" | "metaKey" | "shiftKey" | "key">;
+type Chord = Pick<KeyboardEvent, "ctrlKey" | "altKey" | "metaKey" | "shiftKey" | "key" | "code">;
 
 export function isDemoShortcut(event: Chord): boolean {
   return (
@@ -18,7 +18,9 @@ export function isDemoShortcut(event: Chord): boolean {
     event.altKey &&
     !event.metaKey &&
     !event.shiftKey &&
-    event.key.toLowerCase() === "d"
+    // The physical key as well as the character: on a Mac, Option turns D into ∂ before the
+    // page sees it, and `key` alone would never match there.
+    (event.code === "KeyD" || event.key.toLowerCase() === "d")
   );
 }
 
