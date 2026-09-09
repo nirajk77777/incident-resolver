@@ -123,8 +123,9 @@ from inside the stack, which is what keeps them safe without a client-side crede
 On Coolify: a new resource from this repository with the **Docker Compose** build pack and
 `docker-compose.deploy.yml` as the compose file. Then, in its environment: `POSTGRES_PASSWORD`,
 `RESOLVER=real`, `OPENAI_API_KEY`, `COHERE_API_KEY`, `GITHUB_TOKEN`, the two Langfuse keys, and
-`GRAFANA_URL` set to the domain Grafana gets. Add `SHOPLITE_SEED_ON_START=true` for the first
-deploy only — it truncates every ShopLite table — and remove it afterwards. Everything else has
+`GRAFANA_URL` set to the domain Grafana gets. Add `SHOPLITE_SEED_ON_START=true` and `SEED_KNOWLEDGE_ON_START=true` for the first
+deploy only — the first truncates every ShopLite table, the second resets the knowledge base
+to its seeded Incidents and Help articles — and remove both afterwards. Everything else has
 a default in the compose file.
 
 To run the same stack on a laptop, add the ports back with an override:

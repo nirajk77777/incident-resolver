@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildLogQuery, flattenStreams, type LokiStream } from "./loki";
+import {
+  buildLogQuery,
+  flattenStreams,
+  type LogEntry,
+  type LokiStream,
+  matchesQuery,
+} from "./loki";
 
 const service = "shoplite-api";
 
@@ -26,20 +32,9 @@ describe("buildLogQuery", () => {
     );
   });
 
-  it("matches the text case-insensitively and escapes regex metacharacters and quotes", () => {
-    expect(buildLogQuery({ serviceName: service, query: 'declined (gateway) "x"' })).toBe(
-      '{service_name="shoplite-api"} |~ "(?i)declined \\\\(gateway\\\\) \\"x\\""',
-    );
-  });
-
-  it("puts the line filter before the label filters and ignores blank text", () => {
-    expect(
-      buildLogQuery({ serviceName: service, query: "  declined ", level: "warn", traceId: "abc" }),
-    ).toBe(
-      '{service_name="shoplite-api"} |~ "(?i)declined" | detected_level=~"warn|error|fatal" | trace_id="abc"',
-    );
-    expect(buildLogQuery({ serviceName: service, query: "   " })).toBe(
-      '{service_name="shoplite-api"}',
+  it("combines the level and the trace id, and carries no line filter: text is matched after the read", () => {
+    expect(buildLogQuery({ serviceName: service, level: "warn", traceId: "abc" })).toBe(
+      '{service_name="shoplite-api"} | detected_level=~"warn|error|fatal" | trace_id="abc"',
     );
   });
 
@@ -122,5 +117,39 @@ describe("flattenStreams", () => {
       spanId: undefined,
       fields: {},
     });
+  });
+});
+
+describe("matchesQuery", () => {
+  const line: LogEntry = {
+    timestamp: "2026-09-09T19:24:15.735Z",
+    level: "info",
+    message: "checkout completed",
+    traceId: "d0c5c4223e3158b2c0cca65cc4588a75",
+    spanId: "ca3ddfb65b60b51e",
+    fields: {
+      orderId: "5212af26-3251-4a9c-add3-13f874063266",
+      discountCode: "SALE10",
+      totalCents: "3402",
+    },
+  };
+
+  it("matches the message, case-insensitively", () => {
+    expect(matchesQuery(line, "Checkout")).toBe(true);
+    expect(matchesQuery(line, "declined")).toBe(false);
+  });
+
+  it("matches what pino attached as a field, which a LogQL line filter never sees", () => {
+    expect(matchesQuery(line, "sale10")).toBe(true);
+    expect(matchesQuery(line, "5212af26")).toBe(true);
+  });
+
+  it("matches a field's key, so a search for the kind of thing finds the lines that carry one", () => {
+    expect(matchesQuery(line, "orderId")).toBe(true);
+  });
+
+  it("lets every line through when there is no text, blank included", () => {
+    expect(matchesQuery(line, undefined)).toBe(true);
+    expect(matchesQuery(line, "   ")).toBe(true);
   });
 });

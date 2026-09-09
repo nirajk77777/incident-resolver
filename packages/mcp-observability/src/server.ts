@@ -9,6 +9,7 @@ import {
   type LogLevel,
   type LokiClient,
   logLevels,
+  matchesQuery,
 } from "./loki";
 import {
   checkoutErrorsQuery,
@@ -35,8 +36,17 @@ export type ObservabilityServerOptions = {
   reporterEmail?: string | undefined;
 };
 
+/**
+ * How many lines a text search reads before matching them here. Well under Loki's default
+ * cap of 5000 a query, and far past an hour of ShopLite at demo traffic; a busier day is
+ * what `since` is for.
+ */
+const textScanLimit = 2000;
+
 export type LogSearchResult = {
   logql: string;
+  /** The text the lines were matched on, in the message or the fields; absent when there was none. */
+  query?: string | undefined;
   since: string;
   lines: LogEntry[];
   lineCount: number;
@@ -118,11 +128,15 @@ export function createObservabilityServer(options: ObservabilityServerOptions): 
     level?: LogLevel | undefined;
     traceId?: string | undefined;
   }): Promise<LogSearchResult> {
-    const logql = buildLogQuery({ serviceName, ...input });
-    const streams = await loki.queryRange(logql, input.since, lineCap + 1);
-    const entries = flattenStreams(streams);
+    const logql = buildLogQuery({ serviceName, level: input.level, traceId: input.traceId });
+    const query = input.query?.trim() || undefined;
+    // With text to find, more lines are read than are returned: the text is matched here,
+    // over the message and the fields, and Loki cannot be asked to do that.
+    const streams = await loki.queryRange(logql, input.since, query ? textScanLimit : lineCap + 1);
+    const entries = flattenStreams(streams).filter((entry) => matchesQuery(entry, query));
     return {
       logql,
+      query,
       since: input.since,
       lines: entries.slice(0, lineCap),
       lineCount: Math.min(entries.length, lineCap),
@@ -136,13 +150,17 @@ export function createObservabilityServer(options: ObservabilityServerOptions): 
     {
       title: "Search ShopLite logs",
       description:
-        "Searches ShopLite's log lines in Loki, newest first. Give free text to match in the line, a level " +
+        "Searches ShopLite's log lines in Loki, newest first. Give free text to match in the message or in " +
+        "any field on the line - an order id, a discount code, a product name - a level " +
         "to see that level and above, a trace id to see every line of one request, or any combination. " +
         `Looks back ${defaultSince.text} by default, or ${defaultSince.traceId} when a trace id is given, ` +
         `unless \`since\` says otherwise. At most ${lineCap} lines come back, and card numbers and other ` +
         "people's emails are masked. Each line carries its trace id, so a hit can be followed with get_trace.",
       inputSchema: {
-        query: z.string().optional().describe("Text to find in the line, case-insensitive"),
+        query: z
+          .string()
+          .optional()
+          .describe("Text to find in the message or the line's fields, case-insensitive"),
         since: durationSchema.optional().describe("How far back to look, such as 15m, 1h, or 1d"),
         level: z.enum(logLevels).optional().describe("Lowest level to include"),
         traceId: traceIdSchema.optional().describe("Only lines from this request"),

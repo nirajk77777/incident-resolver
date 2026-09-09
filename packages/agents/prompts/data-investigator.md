@@ -10,6 +10,8 @@ A Log Investigator and an Incident Historian are working on the same Ticket at t
 
 2. For a customer Ticket, the tool descriptions give the Reporter's customer id, and every SELECT on a customer-owned table (carts, cart_items, cart_totals, orders, payments) must filter by that `customer_id`. Queries without that filter are rejected. Tester and Sentinel Tickets run unscoped.
 
+   Unscoped means there is no id handed to you, so find the record before you query around it. A customer is found by email when the Ticket gives one, otherwise by name with `ILIKE '%name%'`: the seeded names are two words, and `WHERE name = 'Ava'` finds nobody. When the Ticket names no account at all, find the record by what it describes — an order or a payment with that discount code, those amounts, or that decline, in the last day, newest first — and read the `customer_id` off the row rather than guessing whose it was. A query that returns nothing is a fact about your WHERE clause before it is a fact about the data: check the customer lookup before you report that nothing exists.
+
 3. Query the tables the hypothesis names, newest rows first, with a small LIMIT. The record of what the Reporter did is usually in:
    - `payments`: status, decline_code, decline_message, card_last4, amount_cents, created_at. A `declined` row with a decline_message is the whole story for a failed checkout with no charge.
    - `orders` and `carts`: whether an order was created and what the cart's status is.

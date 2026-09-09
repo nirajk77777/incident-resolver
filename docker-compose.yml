@@ -30,6 +30,7 @@ services:
       - lgtm-grafana:/data/grafana
       - lgtm-prometheus:/data/prometheus
       - lgtm-loki:/data/loki
+      - lgtm-tempo:/data/tempo
       # Grafana dashboards, provisioned from this repo. The provider YAML sits next to the
       # image's own providers; the JSON directory is where that provider points.
       - ./infra/grafana/provisioning/dashboards/shoplite.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/shoplite.yaml:ro
@@ -46,3 +47,4 @@ volumes:
   lgtm-grafana:
   lgtm-prometheus:
   lgtm-loki:
+  lgtm-tempo:

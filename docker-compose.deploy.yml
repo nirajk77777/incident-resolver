@@ -37,6 +37,7 @@ services:
       - lgtm-grafana:/data/grafana
       - lgtm-prometheus:/data/prometheus
       - lgtm-loki:/data/loki
+      - lgtm-tempo:/data/tempo
       # The dashboard from this repository, provisioned the same way compose does locally.
       - ./infra/grafana/provisioning/dashboards/shoplite.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/shoplite.yaml:ro
       - ./infra/grafana/dashboards:/otel-lgtm/grafana/dashboards/shoplite:ro
@@ -96,6 +97,9 @@ services:
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
       LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-https://cloud.langfuse.com}
+      # First boot against an empty database only: loads the seeded Incidents and Help
+      # articles, and resets both tables to do it. Needs COHERE_API_KEY to embed them.
+      SEED_KNOWLEDGE_ON_START: ${SEED_KNOWLEDGE_ON_START:-}
     volumes:
       # Per-Ticket ShopLite clones. A volume so a restart does not re-clone every open Ticket.
       - workspaces:/workspaces
@@ -139,4 +143,5 @@ volumes:
   lgtm-grafana:
   lgtm-prometheus:
   lgtm-loki:
+  lgtm-tempo:
   workspaces:

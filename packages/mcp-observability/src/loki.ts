@@ -10,30 +10,25 @@ const severityOrder = ["debug", "info", "warn", "error", "fatal"] as const;
 
 export type LogQueryInput = {
   serviceName: string;
-  /** Free text matched case-insensitively against the log line. */
-  query?: string | undefined;
   level?: LogLevel | undefined;
   traceId?: string | undefined;
 };
 
 /**
- * Builds the LogQL for a search. The line filter comes first so Loki discards lines before
- * evaluating the structured-metadata filters, which is the cheap order.
+ * Builds the LogQL for a search: the service's stream, narrowed by level and trace id. Free
+ * text is not in it. A LogQL line filter sees only the message, and what a Reporter names —
+ * an order id, a discount code, a product — is a field pino attached to the line, which Loki
+ * keeps as structured metadata beside it. So the text is matched here, by `matchesQuery`,
+ * over the message and the fields together.
  */
 export function buildLogQuery(input: LogQueryInput): string {
   const stages = [`{service_name=${quoted(input.serviceName)}}`];
-  const query = input.query?.trim();
-  if (query) stages.push(`|~ ${quoted(`(?i)${escapeRegex(query)}`)}`);
   if (input.level) {
     const from = severityOrder.indexOf(input.level);
     stages.push(`| detected_level=~${quoted(severityOrder.slice(from).join("|"))}`);
   }
   if (input.traceId) stages.push(`| trace_id=${quoted(input.traceId)}`);
   return stages.join(" ");
-}
-
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /** One stream from Loki's `query_range` response: shared labels plus `[nanos, line]` pairs. */
@@ -64,6 +59,19 @@ const noiseKeys = new Set([
   "flags",
   "observed_timestamp",
 ]);
+
+/**
+ * Whether a line is about the text: it appears, case-insensitively, in the message or in any
+ * field's key or value. No text matches every line.
+ */
+export function matchesQuery(entry: LogEntry, query: string | undefined): boolean {
+  const needle = query?.trim().toLowerCase();
+  if (!needle) return true;
+  if (entry.message.toLowerCase().includes(needle)) return true;
+  return Object.entries(entry.fields).some(
+    ([key, value]) => key.toLowerCase().includes(needle) || value.toLowerCase().includes(needle),
+  );
+}
 
 /** Turns Loki streams into a flat list of entries, newest first. */
 export function flattenStreams(streams: LokiStream[]): LogEntry[] {
