@@ -12,3 +12,6 @@ workspaces/
 
 # scratch notes, never committed
 item.md
+
+# Playwright MCP output (screenshots, snapshots)
+.playwright-mcp/

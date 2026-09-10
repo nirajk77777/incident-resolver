@@ -1,8 +1,66 @@
 # Incident Resolver
 
-Autonomous support and incident agent. Architecture, agents, and build phases are in [PLAN.md](PLAN.md); vocabulary is in [CONTEXT.md](CONTEXT.md).
+An autonomous support and incident agent. It takes a ticket in the customer's own words, investigates it with the logs, the database, past incidents and the source code, and comes back with an answer, a data fix, or a patched pull request. A human approves every write, and every closed ticket becomes knowledge for the next one.
 
-## Architecture
+![A declined checkout reported from the storefront, investigated by the agent, approved by a Reviewer, and answered on My tickets](docs/demo.gif)
+
+*Recorded against the deployed apps: a declined card on the storefront, one press on **Report a problem**, three investigators in parallel, a reply held at the approval gate, and the answer back where the customer is. About thirty seconds, no engineer.*
+
+| | |
+|---|---|
+| **Reviewer's portal** | [incident-portal.nirajk.dev](https://incident-portal.nirajk.dev/) |
+| **ShopLite**, the store it watches | [shoplite.nirajk.dev](https://shoplite.nirajk.dev/) |
+| **Five-minute guide** with the planted bugs | [docs/overview.html](docs/overview.html) |
+| **Design** | [PLAN.md](PLAN.md) · [CONTEXT.md](CONTEXT.md) · [ADRs](docs/adr/) |
+
+## Contents
+
+- [The problem](#the-problem)
+- [What it does](#what-it-does)
+- [How it works](#how-it-works)
+- [Guardrails](#guardrails)
+- [Try it in five minutes](#try-it-in-five-minutes)
+- [Run it locally](#run-it-locally)
+- [Deploying](#deploying)
+- [Reference](#reference): [Layout](#layout) · [ShopLite](#shoplite) · [Portal API](#portal-api) · [Portal web](#portal-web) · [MCP servers](#mcp-servers) · [Resolver](#resolver) · [Sentinel](#sentinel) · [Rehearsing](#rehearsing) · [Demo walkthrough](#demo-walkthrough)
+
+## The problem
+
+Every product has customers filing tickets, and in most organisations resolving them is still manual. A customer's payment is declined or the app crashes; they raise a ticket; a service desk representative reads it by hand and decides, from experience, what it is. Most of the time the answer is "update to the latest version". When it is not, someone has to open the logs, the database and the code to find the cause, and a resolution takes two or three days. When the same problem comes back next month, nobody knows it is the same problem unless the same person happens to handle it.
+
+Three kinds of ticket sit in that one queue:
+
+- **Questions** a help article already answers. They wait in the same queue as everything else.
+- **Things that look broken** but are working as designed: a declined card shown as "Checkout failed". The reason is in a log the customer and the representative cannot see.
+- **Real defects** that need the logs, the database and the code opened at the same time, and that get investigated again every time they recur.
+
+The agent's first job is to tell these apart. Its second is to make sure the third kind is investigated once, and remembered.
+
+## What it does
+
+```
+Report ──▶ Triage ──▶ Investigate ──▶ Approve ──▶ Reply and close
+                          ▲                             │
+                          └──── closed ticket becomes an Incident ◀──┘
+```
+
+- **Report.** A ticket arrives from the storefront's error toast, from the portal's own form, or from Sentinel, which watches the store's error rates and files one by itself.
+- **Triage** classifies it: category, severity, component, a hypothesis, and a confidence. A plain question is answered from a help article on the spot and nothing else runs.
+- **Investigate.** Everything else fans out to three investigators in parallel: the logs, traces and metrics; the customer's own rows in the database; and past incidents with their documented fix. When the evidence points at a defect in the code, Code RCA clones the repository, writes a failing test, patches it, and runs the suite green; the Fix Shipper pushes the branch.
+- **Approve.** A data fix, a pull request, or a customer reply stops for a Reviewer, who can approve, edit, or reject with a reason the agent reads.
+- **Reply and close.** Every ticket ends with exactly one Outcome and one Reply, and writes an Incident the next investigation can find, whether the agent or a person closed it.
+
+It runs against **ShopLite**, a small e-commerce store built as the product under investigation, with one deliberate defect per category the agent has to tell apart:
+
+| Trigger | What the agent does | Outcome |
+|---|---|---|
+| Customer: "Product images stopped loading" | Triage sees a question and answers from the clear-cache help article. No investigators run. | `answered` |
+| Customer: "Checkout failed, money not deducted" | Follows the trace id to the request, finds the warn log and the payments row showing the gateway declined the card, and explains what the store hid. | `answered` |
+| Tester: "Cart total wrong after removing item" | The Historian finds a resolved incident with the documented SQL fix. The Data Investigator confirms the stale row. The fix waits at the gate, then runs. | `data_fixed` |
+| Customer: "Discount applied twice" | Code RCA writes a failing test in the customer's numbers, patches the pricing function, runs the suite green. The Fix Shipper pushes; the PR waits at the gate. | `fix_proposed` |
+| Nobody: the checkout route starts failing | Sentinel sees the server-error ratio pass 20% and opens the ticket itself, trace ids attached. One ticket per problem. The same pipeline runs. | `fix_proposed` |
+
+## How it works
 
 ```mermaid
 flowchart TB
@@ -16,7 +74,7 @@ flowchart TB
     pweb["portal-web<br/>:5001"]
     papi["portal-api<br/>:5000"]
     sent["sentinel<br/>worker"]
-    agent["Resolver deep agent<br/>Triage · Log · Data · Historian · Code RCA"]
+    agent["Resolver deep agent<br/>Triage · Log · Data · Historian · Code RCA · Fix Shipper"]
     pweb --> papi
     sent --> papi
     papi --> agent
@@ -51,12 +109,41 @@ flowchart TB
   agent -. "traces, prompt versions, scores" .-> lf
 ```
 
-Five Node processes and two containers. A Ticket arrives from a customer through the
-storefront, from a tester through the portal's own form, or from Sentinel, which watches
-ShopLite's error rates and files one by itself. The Resolver investigates it through the MCP
-servers, and every write it wants to make stops for a human first.
+Five Node processes and two containers. One orchestrator (the Resolver, a Deep Agents agent on `gpt-5.4`), five subagents reached through its `task` tool (Triage, three Investigators and the Fix Shipper on `gpt-5.4-mini`, Code RCA on `gpt-5.4`), three custom MCP servers spawned per run as stdio children, and the official GitHub MCP server for the one integration a customer already has. Postgres holds three schemas: `shoplite` for the product, `portal` for tickets, timelines, approvals and LangGraph checkpoints, and `knowledge` for incident and help-article embeddings. ShopLite's telemetry goes to Grafana LGTM over OpenTelemetry; the agent's goes to Langfuse, with every Reviewer decision written back as a score.
 
-## Setup
+**How a ticket is resolved.** Triage runs first with one tool, help-article search. A question with a matching article above the confidence threshold takes the fast path. Everything else fans out to all three investigators in one turn, so their spans overlap in the trace. The Resolver weighs the evidence and returns a structured Verdict: outcome, category, confidence, root cause, evidence references and the reply. Four ways out: no defect, so explain what happened (`answered`); the data is wrong, so a SQL fix waits at the gate (`data_fixed`); the code is wrong, so Code RCA patches and a pull request waits at the gate (`fix_proposed`); or the confidence is under 0.6 and a person takes over with the evidence attached (`escalated`). The order is enforced in code by a middleware on the delegation tool, not by the prompt.
+
+**Ticket lifecycle.** `new` → `triaging` → `investigating` → `awaiting_approval` → `acting` → `closed`. The portal derives status from the agent's event stream; the agent never sets it.
+
+**Why these tools.** Deep Agents and LangGraph give delegation, parallel subagents, interrupts and checkpoints without a custom graph. The three MCP servers are built rather than bought because read-only roles, tenant scoping and redaction have to live in the tool, not in the prompt. GitHub MCP is bought because it is the integration point a customer already has. pgvector with Cohere embeddings and rerank matches past incidents, and the rerank score feeds Triage's confidence. OpenTelemetry on both sides means the customer's trace id links their request to the agent's run. Langfuse holds a trace per run, versioned prompts with a file fallback, and the approval gate's decisions as an evaluation dataset.
+
+## Guardrails
+
+Enforced by roles, parsers and tools, not by the prompt.
+
+- **Reads cannot write.** The database server connects as a Postgres role with `SELECT` and nothing else.
+- **Customers see only their rows.** A customer ticket's queries must filter by that customer. A refused query lands on the timeline marked "no answer", never as an empty result.
+- **Redacted before it leaves the tool.** Card numbers masked entirely; every email but the reporter's masked. Every tool result is safe to show on screen.
+- **Every write waits.** Data fixes, pull requests and customer replies stop for a Reviewer. Pull requests are approve or reject only, and nothing ever merges one.
+- **Approved fixes are still guarded.** One `UPDATE` or `DELETE` with a `WHERE` clause, as a role that can do nothing else, in a transaction, under a row cap, rows snapshotted first.
+- **The code agent has no shell** ([ADR-0002](docs/adr/0002-no-shell-for-the-code-agent.md)). File tools confined to the clone plus two fixed commands: run the tests, list changed files. The Fix Shipper never runs git; it pushes through GitHub's MCP server, pinned to one repository and one branch per ticket.
+- **Low confidence escalates in code.** A Verdict under 0.6 is escalated whatever the model wrote. The holding message replaces the reply; the evidence stays.
+
+## Try it in five minutes
+
+Both apps are deployed, so nothing needs installing.
+
+1. Open [shoplite.nirajk.dev](https://shoplite.nirajk.dev/). The header says who you are signed in as; keep **Ava Chen**.
+2. Add anything to the cart, go to checkout, and pay with `4000 0000 0000 0002`. The toast says "Checkout failed" and carries a trace id, nothing about the card.
+3. Press **Report a problem** in the toast. A ticket is filed with Ava's email, that trace id, and her own words.
+4. Open [incident-portal.nirajk.dev](https://incident-portal.nirajk.dev/). The ticket is at the top of the queue. Open it and watch the timeline: triage, then three investigators at once, every tool call on the record.
+5. In about thirty seconds the run stops at the approval card with the reply it wants to send. Read it, edit it if you like, and approve.
+6. Back in the store, **My tickets** shows the reply. That page is how a customer reply is delivered.
+7. Explore: each ticket links to its run in Langfuse and its request in Grafana; any closed ticket has **Re-run**; an escalated one has a **Resolve manually** form; **File a ticket** files one from the portal.
+
+The [five-minute guide](docs/overview.html) has the other four planted bugs with the steps to provoke each one, and the hidden Demo panel (**Ctrl + Alt + D** in the portal) that makes the store fail on purpose so Sentinel opens a ticket by itself.
+
+## Run it locally
 
 Requires Node 22 (see `.nvmrc`), pnpm 10, and Docker. Two commands, in this repository, once the keys are in place:
 
@@ -139,7 +226,9 @@ services:
 EOF
 ```
 
-## Layout
+## Reference
+
+### Layout
 
 ```
 apps/            portal-api (Tickets, timeline, SSE), portal-web (the Reviewer's portal), sentinel (the watcher)
@@ -150,7 +239,7 @@ infra/grafana/   dashboards provisioned into the LGTM container's Grafana
 
 Tests ending in `.integration.test.ts` need Docker; everything else runs without it. The Workspace integration test needs the network instead: it clones ShopLite, installs it, and walks the double-discount bug from red to green through the tools Code RCA has. The mcp-incidents MCP client test also needs `COHERE_API_KEY` and is skipped without it. The mcp-observability MCP client test also needs ShopLite running, since it generates the declined checkout it then looks for. The agents end-to-end test needs `OPENAI_API_KEY`, `COHERE_API_KEY` and a running ShopLite, and is skipped without the keys; its wiring test needs only Docker.
 
-## ShopLite
+### ShopLite
 
 The product the agent investigates lives in its own repository, [nirajk77777/shoplite](https://github.com/nirajk77777/shoplite), per [ADR-0001](docs/adr/0001-shoplite-in-a-separate-repository.md). It has no compose file: it reads `DATABASE_URL` and `OTEL_EXPORTER_OTLP_ENDPOINT` from env and uses the Postgres and LGTM containers started here, owning the `shoplite` schema. Clone it next to this repo, then in it run `pnpm setup` and `pnpm dev` for the API on port 4000 and the storefront on port 4001. Its README documents the routes, test cards, a curl checkout, the storefront's cart tag and error toast, and the two demo routes the portal's Demo panel calls.
 
@@ -158,7 +247,7 @@ The storefront is also where demo moment one begins and ends. Every error toast 
 
 ShopLite sends traces, logs, and metrics to the LGTM container. The **ShopLite** Grafana dashboard at [localhost:3000/d/shoplite](http://localhost:3000/d/shoplite) shows request rate, error rate by route, p95 latency, the checkout counters, and warn-level logs with clickable trace ids. It is provisioned from `infra/grafana/` through bind mounts in `docker-compose.yml`, so edits to the JSON appear after about ten seconds without restarting.
 
-## Portal API
+### Portal API
 
 `apps/portal-api` is the Fastify service that owns the `portal` schema: Tickets from customers, testers and Sentinel, their timelines, and the approval gate's tables. `pnpm portal` starts it on `PORTAL_API_PORT` (5000).
 
@@ -180,7 +269,7 @@ ShopLite sends traces, logs, and metrics to the LGTM container. The **ShopLite**
 
 A Ticket moves `new` → `triaging` → `investigating` → `awaiting_approval` → `acting` → `closed`, and `closed` always carries exactly one Outcome and one Reply, which a check constraint on the table enforces. The lifecycle is derived in the portal from the Resolver's stream, never inside the agent. A run that fails after LangChain's retries, or times out (`RUN_TIMEOUT_MS`), closes the Ticket as `escalated` with the holding Reply and everything it had already reported, rather than leaving it stuck.
 
-### Escalation, and the Incident a close leaves behind
+#### Escalation, and the Incident a close leaves behind
 
 Three things put a Ticket in front of a person. The Resolver can call `escalate_to_human`, which writes nothing and stops for nobody: once it has, the Ticket is escalated whatever Verdict the run then returns. A Verdict below `CONFIDENCE_THRESHOLD` is escalated too, whatever Outcome it claims — the rule is applied both where the run reports its Verdict and where the portal closes the Ticket on one, so it holds for every Resolver behind the seam. And a run that never reaches a Verdict at all is escalated with reason `agent_error`. In all three the root cause and the Evidence survive onto the timeline and the Ticket; only the Reply is swapped for the holding message, because an answer nobody trusts must not reach the Reporter.
 
@@ -192,7 +281,7 @@ Either way of finishing writes an **Incident** to the `knowledge` schema, embedd
 
 Each entry of the timeline is a `portal.ticket_events` row, written as the run streams and published to every open SSE connection. Frames are unnamed, so `new EventSource(url).onmessage` receives the whole timeline and reads the kind of entry off `type` in the data: `subagent_start`, `subagent_end`, `tool_call`, `tool_result`, `message`, `interrupt`, `decision`, `verdict`, or the portal's own `status`. A `tool_result` says whether the tool answered: a call that did not — an unscoped query on a customer Ticket turned away by the tenant guard, a statement that is not a single `SELECT`, a log search that timed out — arrives with `failed` set and the reason as its result, so it is on the record rather than looking like a call that came back empty. It says `failed` rather than `rejected` because the stream reports the error as text, so a guard's refusal and a broken connection cannot be told apart there; the reason on the card says which. The frame id is the entry's sequence, so a reloaded page sends `Last-Event-ID` (or `?lastEventId=`) and gets exactly what it missed before the stream goes live. Entries carry the run number, counting re-runs of a Ticket from 1. Tickets run concurrently, one independent run each.
 
-### The approval gate
+#### The approval gate
 
 Every write the agent can make stops for a human first (PLAN.md section 5). The Resolver's own tools are the writes — `apply_data_fix`, `create_pull_request`, and `send_customer_reply` — and Deep Agents' `interruptOn` raises a LangGraph interrupt before any of them runs. [ADR-0003](docs/adr/0003-the-resolver-owns-every-write.md) records why the gate is on the Resolver's tools rather than on the Data Investigator's `propose_data_fix`.
 
@@ -211,7 +300,7 @@ Each Decision goes back onto the run's Langfuse trace as a score (`approved`, `e
 
 A traced run reports the Langfuse trace it is writing to before it does any work. That is not a timeline entry — it goes on the Ticket as `langfuseTraceId`, so the portal can link to the trace of whichever run is the latest.
 
-## Portal web
+### Portal web
 
 `apps/portal-web` is the Reviewer's portal: a Vite React app on 5001 that reads portal-api through a dev-server proxy on `/api`, so requests are same-origin and the API needs no CORS.
 
@@ -230,11 +319,11 @@ pnpm --filter @incident-resolver/portal-web dev     # portal-web on 5001
 - **File a ticket** (`/tickets/new`): a summary, what went wrong, optional steps to reproduce, and an optional ShopLite trace id. Filing it starts the run and opens its Timeline.
 - Each Ticket links out to the two traces it carries: the Resolver run in Langfuse, and the ShopLite request in Grafana Explore against Tempo. Both appear only once there is a trace id to point at, and both base URLs come from `GET /config`.
 
-## MCP servers
+### MCP servers
 
 Custom MCP servers run over stdio as child processes of portal-api. Each one can also be started by hand for a quick check with an MCP inspector.
 
-### mcp-database
+#### mcp-database
 
 `packages/mcp-database` gives the agent `describe_schema`, `run_readonly_sql`, and `propose_data_fix` over ShopLite's data.
 
@@ -250,7 +339,7 @@ REPORTER_EMAIL=ava.chen@example.com pnpm --filter @incident-resolver/mcp-databas
 
 Its integration tests drive the tools through the MCP client and need ShopLite migrated and seeded.
 
-### mcp-incidents
+#### mcp-incidents
 
 `packages/mcp-incidents` gives the agent the knowledge base: `search_similar_incidents`, `get_incident`, `save_incident`, and `search_help_articles`.
 
@@ -266,7 +355,7 @@ COHERE_API_KEY=... pnpm --filter @incident-resolver/mcp-incidents start
 
 Its integration tests drive the tools through the MCP client and reseed the knowledge schema first, so they need Docker and the Cohere key. The pgvector store test needs only Docker, and the test that proves the documented cart_totals UPDATE against ShopLite's pricing rules needs ShopLite migrated and seeded.
 
-### mcp-observability
+#### mcp-observability
 
 `packages/mcp-observability` gives the agent ShopLite's telemetry in the LGTM container: `search_logs` over Loki, `get_trace` over Tempo, `query_metrics` and `get_error_rate` over Prometheus, and `list_recent_errors` across all three.
 
@@ -284,7 +373,7 @@ REPORTER_EMAIL=ava.chen@example.com pnpm --filter @incident-resolver/mcp-observa
 
 Its integration tests generate one declined checkout against a running ShopLite, then drive every tool through the MCP client, polling the Prometheus-backed tools until ShopLite's next metric export lands.
 
-## Resolver
+### Resolver
 
 `packages/agents` is the agent itself: the Resolver deep agent, its Triage subagent, three Investigators, Code RCA and the Fix Shipper, the prompts, and a CLI that runs one Ticket and prints the Verdict.
 
@@ -317,7 +406,7 @@ Paths are relative to where you run the command. Pass `-` to read the Ticket fro
 
 The double-discount Ticket needs nothing in ShopLite's data: the bug is in `apps/api/src/domain/order.ts`, which prices an order from a subtotal that has already had the discount taken off, and Code RCA finds it in the clone. The two other investigated Tickets assume the state they describe exists in ShopLite: the declined-card Ticket needs a recent checkout with a card ending in 0002, and the stale cart total Ticket needs a cart whose line was removed through `DELETE /customers/:customerId/cart/items/:productId`, which leaves `cart_totals` holding the old count. The end-to-end test creates both against a running ShopLite before it runs.
 
-## Sentinel
+### Sentinel
 
 `apps/sentinel` is the watcher: nobody has to notice ShopLite is broken for a Ticket to
 exist. `pnpm sentinel` starts it, and `pnpm dev` starts it alongside everything else.
@@ -351,12 +440,12 @@ exist. `pnpm sentinel` starts it, and `pnpm dev` starts it alongside everything 
 - It reaches the portal over plain HTTP on `PORTAL_API_URL`, the same surface the storefront
   and the tester form use. Sentinel is not privileged and holds no database connection.
 
-## Rehearsing
+### Rehearsing
 
 Three props, so a demo can be given twice in a row and the agent can be checked without
 walking it by hand.
 
-### The Demo panel
+#### The Demo panel
 
 **Ctrl + Alt + D** in the portal reveals it; Escape or the same chord closes it. Hidden
 because a Reviewer has no business resetting the system or making ShopLite fail on purpose,
@@ -369,7 +458,7 @@ and in the portal because the alternative during a demo is a second terminal on 
   unchanged, so a burst already running comes back worded as ShopLite worded it.
 - **Reset** is `pnpm demo:reset` under the same button.
 
-### `pnpm demo:reset`
+#### `pnpm demo:reset`
 
 Puts everything back where a rehearsal starts, and says what it did:
 
@@ -390,7 +479,7 @@ so ShopLite being down does not leave the portal full of last rehearsal's Ticket
 refuses a reset while a Ticket is still running: deleting one out from under its own run
 leaves the run writing to something that is not there.
 
-### `pnpm scorecard`
+#### `pnpm scorecard`
 
 Files every planted bug as a Ticket, approves whatever each run stops on, and reports the
 Category and the Outcome against what that bug should produce:
@@ -417,7 +506,7 @@ green card is a card that produced two real PRs. That needs `GITHUB_TOKEN`; with
 two rows fail as `escalated`, which is the honest answer, since a run with no Fix Shipper
 cannot propose a fix.
 
-## Demo walkthrough
+### Demo walkthrough
 
 Eight minutes, five moments. Before starting: `pnpm demo:reset`, and have the storefront
 (4001), the portal (5001), and the Grafana dashboard

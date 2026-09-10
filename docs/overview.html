@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Incident Resolver Field Guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --ground: #f5f7f9;
+    --surface: #ffffff;
+    --surface-2: #eceff3;
+    --ink: #16212c;
+    --ink-2: #3c4854;
+    --muted: #64707c;
+    --rule: #d6dce3;
+    --rule-strong: #aab4be;
+    --amber: #b8650f;
+    --amber-soft: #fbf1e3;
+    --teal: #1c7a6b;
+    --teal-soft: #e3f3ef;
+    --red: #a93a31;
+    --red-soft: #f9e8e6;
+    --blue: #2e5f9e;
+    --blue-soft: #e6eef8;
+    --code-bg: #1b2430;
+    --code-ink: #dfe6ee;
+    --code-dim: #8593a2;
+    --shadow: 0 1px 2px rgba(22, 33, 44, 0.06), 0 8px 24px -12px rgba(22, 33, 44, 0.18);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0f1418; --surface: #161c22; --surface-2: #1d252d; --ink: #e4e9ee; --ink-2: #c0c9d2; --muted: #93a0ac;
+      --rule: #273039; --rule-strong: #3a4650; --amber: #e39a45; --amber-soft: #2b2115; --teal: #4ebba6; --teal-soft: #14302b;
+      --red: #e0736a; --red-soft: #341b19; --blue: #7aa6df; --blue-soft: #172538; --code-bg: #0b0f13; --code-ink: #dfe6ee; --code-dim: #7d8a98;
+      --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 8px 24px -12px rgba(0,0,0,0.6);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #0f1418; --surface: #161c22; --surface-2: #1d252d; --ink: #e4e9ee; --ink-2: #c0c9d2; --muted: #93a0ac;
+    --rule: #273039; --rule-strong: #3a4650; --amber: #e39a45; --amber-soft: #2b2115; --teal: #4ebba6; --teal-soft: #14302b;
+    --red: #e0736a; --red-soft: #341b19; --blue: #7aa6df; --blue-soft: #172538; --code-bg: #0b0f13; --code-ink: #dfe6ee; --code-dim: #7d8a98;
+    --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 8px 24px -12px rgba(0,0,0,0.6);
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  body { margin: 0; background: var(--ground); color: var(--ink); font-family: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif; font-size: 16px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
+  a { color: var(--blue); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+  a:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+  code, pre, .mono { font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace; }
+  code { font-size: 0.88em; background: var(--surface-2); padding: 0.1em 0.4em; border-radius: 4px; }
+  pre { margin: 0.6rem 0 0; background: var(--code-bg); color: var(--code-ink); padding: 0.85rem 1rem; border-radius: 6px; overflow-x: auto; font-size: 0.82rem; line-height: 1.6; }
+  pre code { background: none; padding: 0; color: inherit; font-size: inherit; }
+  pre .c { color: var(--code-dim); }
+  h1, h2, h3, h4 { font-family: "Bricolage Grotesque", "Helvetica Neue", Arial, sans-serif; font-weight: 600; line-height: 1.15; letter-spacing: -0.01em; text-wrap: balance; margin: 0; }
+  h2 { font-size: 1.8rem; margin: 4rem 0 0.75rem; }
+  h3 { font-size: 1.15rem; margin: 1.75rem 0 0.5rem; }
+  p { margin: 0 0 0.9rem; }
+  .lede { font-size: 1.12rem; color: var(--ink-2); }
+  .eyebrow { font-family: "IBM Plex Mono", monospace; font-size: 0.72rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); margin-bottom: 0.5rem; }
+  .note { color: var(--muted); font-size: 0.9rem; }
+
+  .shell { max-width: 1040px; margin: 0 auto; padding: 0 1.25rem 5rem; }
+  .prose { max-width: 70ch; }
+
+  /* masthead */
+  header.mast { padding: 3.5rem 0 2rem; }
+  header.mast h1 { font-size: clamp(2.4rem, 5vw, 3.4rem); font-weight: 700; letter-spacing: -0.025em; }
+  header.mast .lede { margin-top: 0.9rem; max-width: 62ch; }
+  .doors { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 1.5rem; }
+  .door { display: inline-flex; flex-direction: column; gap: 0.1rem; padding: 0.7rem 1.1rem; border-radius: 8px; text-decoration: none; background: var(--ink); color: var(--ground); min-width: 220px; }
+  .door.second { background: var(--surface); color: var(--ink); border: 1px solid var(--rule-strong); }
+  .door b { font-family: "Bricolage Grotesque", sans-serif; font-weight: 600; font-size: 1rem; }
+  .door small { font-family: "IBM Plex Mono", monospace; font-size: 0.72rem; opacity: 0.75; }
+  .repos { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.35rem 0.6rem; margin-top: 1.1rem; font-family: "IBM Plex Mono", monospace; font-size: 0.82rem; }
+  .repos .eyebrow { margin: 0 0.4rem 0 0; }
+  .repos .sep { color: var(--muted); }
+
+  /* figures */
+  figure { margin: 1.5rem 0 0.5rem; }
+  figure.wide { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 1.25rem 1.25rem 0.75rem; overflow-x: auto; }
+  figcaption { font-size: 0.84rem; color: var(--muted); margin-top: 0.6rem; }
+  svg.diagram { display: block; width: 100%; height: auto; min-width: 640px; font-family: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif; }
+  svg .box { fill: var(--surface); stroke: var(--rule-strong); stroke-width: 1.2; }
+  svg .box.lead { stroke: var(--ink); stroke-width: 1.6; }
+  svg .box.gate { fill: var(--amber-soft); stroke: var(--amber); }
+  svg .box.ghost { fill: none; stroke: var(--rule-strong); stroke-dasharray: 4 3; }
+  svg .box.soft { fill: var(--surface-2); stroke: none; }
+  svg .t { fill: var(--ink); font-size: 13px; font-weight: 500; }
+  svg .t.b { font-family: "Bricolage Grotesque", sans-serif; font-weight: 600; font-size: 14px; }
+  svg .s { fill: var(--muted); font-size: 11px; }
+  svg .m { fill: var(--ink-2); font-family: "IBM Plex Mono", monospace; font-size: 11px; }
+  svg .amber { fill: var(--amber); }
+  svg .teal { fill: var(--teal); }
+  svg .red { fill: var(--red); }
+  svg .ghosttext { fill: var(--muted); }
+  svg .ln { fill: none; stroke: var(--rule-strong); stroke-width: 1.4; }
+  svg .ln.dark { stroke: var(--ink); }
+  svg .ln.loop { stroke: var(--teal); stroke-dasharray: 5 4; }
+  svg .ln.dash { stroke-dasharray: 3 3; }
+  svg .pill { rx: 9; }
+  svg .pill.teal { fill: var(--teal-soft); }
+  svg .pill.amber { fill: var(--amber-soft); }
+  svg .pill.red { fill: var(--red-soft); }
+  svg .pt { font-family: "IBM Plex Mono", monospace; font-size: 11px; font-weight: 500; }
+
+  /* three tiles */
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 0.75rem; margin: 1.25rem 0; }
+  .tile { background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 0.9rem 1rem; }
+  .tile b { display: block; font-family: "Bricolage Grotesque", sans-serif; font-weight: 600; font-size: 1rem; margin-bottom: 0.25rem; }
+  .tile p { margin: 0; font-size: 0.9rem; color: var(--ink-2); }
+  .tile .pill { margin-bottom: 0.5rem; }
+
+  .pill { display: inline-block; font-family: "IBM Plex Mono", monospace; font-size: 0.72rem; letter-spacing: 0.04em; padding: 0.12rem 0.5rem; border-radius: 999px; border: 1px solid var(--rule-strong); color: var(--ink-2); white-space: nowrap; }
+  .pill.amber { background: var(--amber-soft); color: var(--amber); border-color: transparent; }
+  .pill.teal { background: var(--teal-soft); color: var(--teal); border-color: transparent; }
+  .pill.red { background: var(--red-soft); color: var(--red); border-color: transparent; }
+  .pill.blue { background: var(--blue-soft); color: var(--blue); border-color: transparent; }
+
+  /* lifecycle rail */
+  .rail { display: flex; margin: 1.25rem 0 0.5rem; overflow-x: auto; padding-bottom: 0.5rem; }
+  .rail .stop { position: relative; flex: 1 0 120px; padding-top: 1.2rem; }
+  .rail .stop::before { content: ""; position: absolute; left: 0; right: 0; top: 0.35rem; height: 2px; background: var(--rule-strong); }
+  .rail .stop::after { content: ""; position: absolute; left: 0; top: 0; width: 12px; height: 12px; border-radius: 50%; background: var(--surface); border: 2px solid var(--rule-strong); }
+  .rail .stop.gate::after { background: var(--amber); border-color: var(--amber); }
+  .rail .stop.end::after { background: var(--ink); border-color: var(--ink); }
+  .rail .stop .mono { font-size: 0.8rem; font-weight: 500; }
+  .rail .stop small { display: block; color: var(--muted); font-size: 0.76rem; line-height: 1.4; padding-right: 0.75rem; margin-top: 0.15rem; }
+
+  /* steps */
+  .steps { counter-reset: step; list-style: none; margin: 1.25rem 0 0; padding: 0; }
+  .steps > li { counter-increment: step; position: relative; padding-left: 2.8rem; margin-bottom: 1.1rem; max-width: 70ch; }
+  .steps > li::before { content: counter(step, decimal-leading-zero); position: absolute; left: 0; top: 0.15rem; font-family: "IBM Plex Mono", monospace; font-size: 0.8rem; color: var(--amber); font-weight: 500; }
+  .steps b { font-weight: 600; }
+  .steps p { margin: 0; }
+
+  /* bugs */
+  .bugs { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem; margin: 1.25rem 0; }
+  .bug { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 1.1rem 1.2rem 1.2rem; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 0.6rem; }
+  .bug header { display: flex; flex-wrap: wrap; gap: 0.4rem 0.6rem; align-items: baseline; }
+  .bug header h3 { margin: 0; font-size: 1.15rem; }
+  .bug .lbl { font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 0.35rem 0 0.1rem; }
+  .bug ol { margin: 0; padding-left: 1.2rem; font-size: 0.9rem; }
+  .bug ol li { margin-bottom: 0.15rem; }
+  .bug p { margin: 0; font-size: 0.9rem; }
+  .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; font-family: "IBM Plex Mono", monospace; font-size: 0.76rem; margin-top: 0.25rem; }
+  .compare div { background: var(--surface-2); border-radius: 6px; padding: 0.5rem 0.65rem; }
+  .compare div span { display: block; font-family: "IBM Plex Sans", sans-serif; font-size: 0.7rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin-bottom: 0.3rem; }
+  .compare .row { display: flex; justify-content: space-between; gap: 0.5rem; }
+  .compare .bad { color: var(--red); font-weight: 500; }
+  .compare .ok { color: var(--teal); }
+
+  footer { margin-top: 4rem; padding-top: 1.25rem; border-top: 1px solid var(--rule); font-size: 0.85rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <header class="mast">
+    <div class="eyebrow">Autonomous support and incident agent</div>
+    <h1>Incident Resolver</h1>
+    <p class="lede">A ticket comes in from a customer or a tester. The agent reads the logs, queries the database, searches past incidents, and reads the source code. It answers, proposes a data fix, or patches the bug. A human approves every write.</p>
+    <div class="doors">
+      <a class="door" href="https://incident-portal.nirajk.dev/"><b>Open the Reviewer's portal</b><small>incident-portal.nirajk.dev</small></a>
+      <a class="door second" href="https://shoplite.nirajk.dev/"><b>Open ShopLite, the store it watches</b><small>shoplite.nirajk.dev</small></a>
+    </div>
+    <div class="repos">
+      <span class="eyebrow">Source on GitHub</span>
+      <a href="https://github.com/nirajk77777/incident-resolver">nirajk77777/incident-resolver</a>
+      <span class="sep">·</span>
+      <a href="https://github.com/nirajk77777/shoplite">nirajk77777/shoplite</a>
+    </div>
+  </header>
+
+  <figure class="wide">
+    <svg class="diagram" viewBox="0 0 960 190" role="img" aria-label="The loop: a report becomes a ticket, the agent triages and investigates, a reviewer approves, the reporter gets a reply, and the closed ticket becomes an incident the next investigation can find.">
+      <defs>
+        <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--rule-strong)"/></marker>
+        <marker id="ahT" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--teal)"/></marker>
+      </defs>
+      <!-- nodes -->
+      <rect class="box" x="10" y="40" width="140" height="56" rx="8"/>
+      <text class="t b" x="80" y="64" text-anchor="middle">Report</text>
+      <text class="s" x="80" y="82" text-anchor="middle">toast · form · Sentinel</text>
+
+      <rect class="box" x="200" y="40" width="140" height="56" rx="8"/>
+      <text class="t b" x="270" y="64" text-anchor="middle">Triage</text>
+      <text class="s" x="270" y="82" text-anchor="middle">category · confidence</text>
+
+      <rect class="box lead" x="390" y="40" width="160" height="56" rx="8"/>
+      <text class="t b" x="470" y="64" text-anchor="middle">Investigate</text>
+      <text class="s" x="470" y="82" text-anchor="middle">logs · data · history · code</text>
+
+      <rect class="box gate" x="600" y="40" width="140" height="56" rx="8"/>
+      <text class="t b amber" x="670" y="64" text-anchor="middle">Approve</text>
+      <text class="s" x="670" y="82" text-anchor="middle">a human, on every write</text>
+
+      <rect class="box" x="790" y="40" width="160" height="56" rx="8"/>
+      <text class="t b" x="870" y="64" text-anchor="middle">Reply and close</text>
+      <text class="s" x="870" y="82" text-anchor="middle">one Outcome, one Reply</text>
+
+      <!-- arrows -->
+      <line class="ln" x1="150" y1="68" x2="198" y2="68" marker-end="url(#ah)"/>
+      <line class="ln" x1="340" y1="68" x2="388" y2="68" marker-end="url(#ah)"/>
+      <line class="ln" x1="550" y1="68" x2="598" y2="68" marker-end="url(#ah)"/>
+      <line class="ln" x1="740" y1="68" x2="788" y2="68" marker-end="url(#ah)"/>
+
+      <!-- knowledge loop -->
+      <path class="ln loop" d="M870 96 V150 H470 V98" marker-end="url(#ahT)"/>
+      <rect class="pill teal" x="560" y="139" width="220" height="22"/>
+      <text class="pt teal" x="670" y="154" text-anchor="middle">closed ticket → Incident → knowledge base</text>
+    </svg>
+    <figcaption>The loop. Every closed ticket, whether the agent or a person closed it, becomes an Incident the next investigation searches. The system gets better from being used.</figcaption>
+  </figure>
+
+  <section id="problem">
+    <h2>The problem</h2>
+    <p class="lede prose">Most support tickets are not engineering problems. The few that are cost an engineer an afternoon, and what they learn is lost by the next one.</p>
+    <div class="tiles">
+      <div class="tile"><span class="pill blue">question</span><b>Already answered somewhere</b><p>"How do I get the images back?" A help article covers it. It still waits in the same queue.</p></div>
+      <div class="tile"><span class="pill blue">looks broken</span><b>Working as designed</b><p>A declined card shown as "Checkout failed". The reason is in the logs; the customer and the support agent cannot see it.</p></div>
+      <div class="tile"><span class="pill blue">real defect</span><b>Needs logs, database and code at once</b><p>A stale total, a discount taken twice. Someone opens three tools, and repeats an investigation done last month.</p></div>
+    </div>
+    <p class="prose">Incident Resolver tells the three apart, gathers evidence from every source in parallel, and comes back with a verdict and the evidence behind it. What it cannot settle alone goes to a person with the evidence attached.</p>
+  </section>
+
+  <section id="how">
+    <h2>How a ticket is resolved</h2>
+    <figure class="wide">
+      <svg class="diagram" viewBox="0 0 960 470" role="img" aria-label="Decision flow: triage takes questions to the fast path; everything else fans out to three investigators in parallel, then the resolver decides between answered, a gated data fix, code RCA, or escalation.">
+        <!-- Ticket -->
+        <rect class="box" x="400" y="10" width="160" height="40" rx="8"/>
+        <text class="t b" x="480" y="35" text-anchor="middle">Ticket</text>
+        <line class="ln" x1="480" y1="50" x2="480" y2="78" marker-end="url(#ah)"/>
+
+        <!-- Triage -->
+        <rect class="box" x="380" y="80" width="200" height="52" rx="8"/>
+        <text class="t b" x="480" y="102" text-anchor="middle">Triage</text>
+        <text class="s" x="480" y="120" text-anchor="middle">gpt-5.4-mini · help articles only</text>
+
+        <!-- fast path -->
+        <path class="ln" d="M580 106 H700" marker-end="url(#ah)"/>
+        <text class="s" x="640" y="98" text-anchor="middle">a Question with a</text>
+        <text class="s" x="640" y="126" text-anchor="middle">matching help article</text>
+        <rect class="box" x="702" y="82" width="200" height="48" rx="8"/>
+        <text class="t" x="802" y="102" text-anchor="middle">Fast path</text>
+        <text class="s" x="802" y="119" text-anchor="middle">from the article, no investigators</text>
+        <path class="ln" d="M802 130 V386" marker-end="url(#ah)"/>
+
+        <!-- to investigators -->
+        <path class="ln" d="M480 132 V160 H180 V186" marker-end="url(#ah)"/>
+        <path class="ln" d="M480 160 V186" marker-end="url(#ah)"/>
+        <path class="ln" d="M480 160 H780 V186" marker-end="url(#ah)" />
+        <text class="s" x="330" y="154" text-anchor="middle">everything else</text>
+
+        <!-- investigators -->
+        <rect class="box" x="90" y="188" width="180" height="56" rx="8"/>
+        <text class="t b" x="180" y="210" text-anchor="middle">Log Investigator</text>
+        <text class="s" x="180" y="228" text-anchor="middle">Loki · Tempo · Prometheus</text>
+        <rect class="box" x="390" y="188" width="180" height="56" rx="8"/>
+        <text class="t b" x="480" y="210" text-anchor="middle">Data Investigator</text>
+        <text class="s" x="480" y="228" text-anchor="middle">read-only SQL, reporter-scoped</text>
+        <rect class="box" x="690" y="188" width="180" height="56" rx="8"/>
+        <text class="t b" x="780" y="210" text-anchor="middle">Incident Historian</text>
+        <text class="s" x="780" y="228" text-anchor="middle">past incidents, Cohere rerank</text>
+        <text class="m" x="480" y="266" text-anchor="middle">all three, in parallel, every time</text>
+
+        <!-- to resolver -->
+        <path class="ln" d="M180 244 V286 H480" />
+        <path class="ln" d="M780 244 V286 H480" />
+        <path class="ln" d="M480 244 V298" marker-end="url(#ah)"/>
+
+        <rect class="box lead" x="360" y="300" width="240" height="52" rx="8"/>
+        <text class="t b" x="480" y="322" text-anchor="middle">Resolver weighs the evidence</text>
+        <text class="s" x="480" y="340" text-anchor="middle">gpt-5.4 · returns a structured Verdict</text>
+
+        <!-- four outcomes -->
+        <path class="ln" d="M480 352 V370 H120 V386" marker-end="url(#ah)"/>
+        <path class="ln" d="M360 370 V386" marker-end="url(#ah)"/>
+        <path class="ln" d="M480 370 H600 V386" marker-end="url(#ah)"/>
+        <path class="ln" d="M600 370 H840"/>
+        <path class="ln" d="M840 370 V386" marker-end="url(#ah)"/>
+
+        <rect class="box" x="20" y="388" width="200" height="66" rx="8"/>
+        <text class="t" x="120" y="408" text-anchor="middle">No defect</text>
+        <text class="s" x="120" y="424" text-anchor="middle">explain what happened</text>
+        <rect class="pill teal" x="85" y="432" width="70" height="18"/><text class="pt teal" x="120" y="445" text-anchor="middle">answered</text>
+
+        <rect class="box gate" x="260" y="388" width="200" height="66" rx="8"/>
+        <text class="t amber" x="360" y="408" text-anchor="middle">Data is wrong</text>
+        <text class="s" x="360" y="424" text-anchor="middle">SQL fix waits at the approval gate</text>
+        <rect class="pill teal" x="320" y="432" width="80" height="18"/><text class="pt teal" x="360" y="445" text-anchor="middle">data_fixed</text>
+
+        <rect class="box gate" x="500" y="388" width="200" height="66" rx="8"/>
+        <text class="t amber" x="600" y="408" text-anchor="middle">Code is wrong</text>
+        <text class="s" x="600" y="424" text-anchor="middle">Code RCA patches · PR at the gate</text>
+        <rect class="pill teal" x="552" y="432" width="96" height="18"/><text class="pt teal" x="600" y="445" text-anchor="middle">fix_proposed</text>
+
+        <rect class="box" x="740" y="388" width="200" height="66" rx="8"/>
+        <text class="t" x="840" y="408" text-anchor="middle">Low confidence</text>
+        <text class="s" x="840" y="424" text-anchor="middle">under 0.6, evidence handed over</text>
+        <rect class="pill red" x="800" y="432" width="80" height="18"/><text class="pt red" x="840" y="445" text-anchor="middle">escalated</text>
+      </svg>
+      <figcaption>The order is enforced in code, not just the prompt: no investigator before Triage, no Code RCA before all three have reported, no second run of any of them.</figcaption>
+    </figure>
+
+    <h3>What the Reviewer sees</h3>
+    <div class="rail">
+      <div class="stop"><span class="mono">new</span><small>Filed from the store or the portal.</small></div>
+      <div class="stop"><span class="mono">triaging</span><small>Category and hypothesis appear.</small></div>
+      <div class="stop"><span class="mono">investigating</span><small>Tool calls stream onto the timeline live.</small></div>
+      <div class="stop gate"><span class="mono">awaiting_approval</span><small>The approval card: approve, edit, or reject.</small></div>
+      <div class="stop"><span class="mono">acting</span><small>The approved write runs.</small></div>
+      <div class="stop end"><span class="mono">closed</span><small>Outcome, Reply, root cause, evidence.</small></div>
+    </div>
+  </section>
+
+
+  <section id="tour">
+    <h2>Try it in five minutes</h2>
+    <p class="prose">Everything below happens in the two web apps. Nothing to install.</p>
+    <ol class="steps">
+      <li><p><b>Open <a href="https://shoplite.nirajk.dev/">ShopLite</a></b> and pick <em>Ava Chen</em> in the "Signed in as" picker at the top.</p></li>
+      <li><p><b>Break a checkout.</b> Add a product, go to checkout, and pay with card <code>4000 0000 0000 0002</code>. The toast says only "Checkout failed" and shows a trace id.</p></li>
+      <li><p><b>Press "Report a problem"</b> on the toast. A ticket opens in the portal with Ava's email, the trace id, and what she was doing. Nothing to retype.</p></li>
+      <li><p><b>Open the <a href="https://incident-portal.nirajk.dev/">portal</a></b>. The ticket is at the top of the queue. Click it and watch the timeline fill in live: Triage, three investigators, tool calls with their results, then the Verdict.</p></li>
+      <li><p><b>Decide on the approval card.</b> The customer Reply stops for you. Approve it as written, or edit the wording first.</p></li>
+      <li><p><b>Back in ShopLite, open "My tickets".</b> Ava reads the Reply you approved.</p></li>
+      <li><p><b>Explore the rest.</b> Each ticket links to its agent trace in Langfuse and its ShopLite request in Grafana. Any closed ticket has a <em>Re-run</em> button. An escalated one has a <em>Resolve manually</em> form, and what you write there becomes an Incident. <em>Reset</em> on the Demo panel puts everything back, keeping the knowledge base.</p></li>
+    </ol>
+
+    <h3>Filing a ticket by hand</h3>
+    <p class="prose">Not every problem starts on the storefront. The portal has its own form for a tester's report, which is how the stale-total and images scenarios below are filed.</p>
+    <ol class="steps">
+      <li><p><b>Click "File a ticket"</b> in the portal header, or open <a href="https://incident-portal.nirajk.dev/tickets/new">incident-portal.nirajk.dev/tickets/new</a>.</p></li>
+      <li><p><b>Write a summary and what went wrong</b> in your own words. Name the customer account you were testing on, such as Ava Chen, so the Data Investigator knows whose rows to look at.</p></li>
+      <li><p><b>Optionally add steps to reproduce</b> and a ShopLite trace id, copied from an error toast. A trace id lets the Log Investigator jump straight to the failed request instead of searching for it.</p></li>
+      <li><p><b>Submit.</b> The ticket is filed as a tester ticket, the run starts at once, and the portal opens its timeline. A tester ticket has no customer Reply to approve, so it closes on its own unless a data fix or pull request stops at the gate.</p></li>
+    </ol>
+  </section>
+
+  <section id="bugs">
+    <h2>Planted bugs to test it with</h2>
+    <p class="prose">Five scenarios, one per category the agent has to tell apart. Four are provoked from the storefront; the last from the portal's Demo panel.</p>
+    <div class="bugs">
+
+      <article class="bug">
+        <header><h3>Images not loading</h3><span class="pill blue">question</span></header>
+        <p>Not a bug at all, and that is the test. File a customer ticket saying the catalog pictures have been broken grey boxes since the sale started.</p>
+        <div class="lbl">Where</div>
+        <p>Portal → <a href="https://incident-portal.nirajk.dev/tickets/new">File a ticket</a>, or the same words from ShopLite.</p>
+        <div class="lbl">Expected</div>
+        <p><span class="pill teal">answered</span> in seconds from the clear-cache help article. Timeline shows Triage only.</p>
+      </article>
+
+      <article class="bug">
+        <header><h3>Card declined, shown as "Checkout failed"</h3><span class="pill blue">user_error</span></header>
+        <p>The mock gateway declines any card ending in 0002. The store hides the reason; the logs and the payments row have it.</p>
+        <div class="lbl">Trigger</div>
+        <ol>
+          <li>Add anything to the cart, go to checkout.</li>
+          <li>Pay with <code>4000 0000 0000 0002</code>.</li>
+          <li>Press "Report a problem" on the toast.</li>
+        </ol>
+        <div class="lbl">Expected</div>
+        <p><span class="pill teal">answered</span>. The Log Investigator finds the 402 and the warn line by trace id; the Data Investigator finds the payments row, scoped to Ava. The Reply says the bank declined it and nothing was charged.</p>
+      </article>
+
+      <article class="bug">
+        <header><h3>Cart total stale after removing an item</h3><span class="pill blue">data_issue</span></header>
+        <p>The header cart tag reads a stored totals row that removal forgets to update. The cart page is right; the tag is wrong.</p>
+        <div class="compare">
+          <div><span>Cart page</span><div class="row"><em>Stoneware Mug ×2</em><b class="ok">24.00</b></div></div>
+          <div><span>Header tag</span><div class="row"><em>3 items</em><b class="bad">49.99</b></div></div>
+        </div>
+        <div class="lbl">Trigger</div>
+        <ol>
+          <li>Add two Stoneware Mugs and a City Map Poster.</li>
+          <li>On the cart page, remove the poster. The tag still counts it.</li>
+          <li>Portal → File a ticket, as a tester, naming Ava's account.</li>
+        </ol>
+        <div class="lbl">Expected</div>
+        <p>The Historian matches a seeded Incident with the documented SQL fix. The run stops at <span class="pill amber">awaiting_approval</span> showing the statement and the rows it would change. Approve, and it closes <span class="pill teal">data_fixed</span>.</p>
+      </article>
+
+      <article class="bug">
+        <header><h3>Discount applied twice</h3><span class="pill blue">code_bug</span></header>
+        <p>The cart prices correctly. The order applies the discount to a subtotal that already had it taken off.</p>
+        <div class="compare">
+          <div><span>Cart page</span><div class="row"><em>subtotal</em><b class="ok">42.00</b></div><div class="row"><em>SALE10</em><b class="ok">−4.20</b></div><div class="row"><em>total</em><b class="ok">37.80</b></div></div>
+          <div><span>Receipt</span><div class="row"><em>subtotal</em><b class="bad">37.80</b></div><div class="row"><em>SALE10</em><b class="bad">−3.78</b></div><div class="row"><em>total</em><b class="bad">34.02</b></div></div>
+        </div>
+        <div class="lbl">Trigger</div>
+        <ol>
+          <li>Add two Stoneware Mugs and a Soy Candle, apply <code>SALE10</code>.</li>
+          <li>Pay with <code>4242 4242 4242 4242</code>. Compare the receipt to the cart.</li>
+          <li>Report it as Ava, quoting both sets of numbers.</li>
+        </ol>
+        <div class="lbl">Expected</div>
+        <p>Code RCA clones ShopLite, writes a failing test in Ava's numbers, patches the pricing function, and runs the suite green. The Fix Shipper pushes the change to a branch and the run stops at <span class="pill amber">awaiting_approval</span> with the pull request it wants to open. Approve, and the PR appears on GitHub against ShopLite, its link goes on the timeline as an internal note, and the ticket closes <span class="pill teal">fix_proposed</span>.</p>
+      </article>
+
+      <article class="bug">
+        <header><h3>Crash on empty-cart checkout</h3><span class="pill blue">code_bug</span><span class="pill">found by Sentinel</span></header>
+        <p>Checkout prices the cart before checking it is empty, and pricing throws on an empty list, so the route answers 500. Nobody has to report this one.</p>
+        <div class="lbl">Trigger</div>
+        <ol>
+          <li>In the portal press <code>Ctrl + Alt + D</code> to open the Demo panel.</li>
+          <li>Click <em>Simulate traffic</em>: thirty seconds of empty-cart checkouts.</li>
+          <li>Watch the queue. Grafana shows the error rate climbing.</li>
+        </ol>
+        <div class="lbl">Expected</div>
+        <p>Sentinel sees the checkout route's server-error ratio pass 20% over a minute and opens the ticket itself, with the trace ids of the failures attached. A second burst opens no second ticket. The same pipeline then runs: Code RCA, a pull request at the gate, and <span class="pill teal">fix_proposed</span> on approval.</p>
+      </article>
+
+
+    </div>
+  </section>
+
+
+
+
+
+</div>
+</body>
+</html>
