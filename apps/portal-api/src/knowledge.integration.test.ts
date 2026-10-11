@@ -16,8 +16,8 @@ import {
 import { inArray } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { FAKE_VERDICT } from "./fake-resolver";
-import type { ResolverEvent, TicketResolver } from "./resolver";
+import { FAKE_VERDICT } from "./resolver/fake-resolver";
+import type { ResolverEvent, TicketResolver } from "./resolver/resolver";
 import { createPortalApi } from "./server";
 
 // Needs `docker compose up`, `pnpm db:migrate`, and a COHERE_API_KEY: this is the one test

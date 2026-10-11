@@ -10,7 +10,7 @@ import {
   type Verdict,
 } from "@incident-resolver/shared";
 import { and, desc, eq, gt, max, ne, sql } from "drizzle-orm";
-import type { TimelineEntry } from "./timeline";
+import type { TimelineEntry } from "../timeline/timeline";
 
 /** A `portal.tickets` row. */
 export type TicketRecord = typeof tickets.$inferSelect;

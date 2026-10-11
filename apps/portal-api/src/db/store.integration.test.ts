@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createDb, type Db, loadConfig, tickets } from "@incident-resolver/shared";
 import { inArray } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { FAKE_VERDICT } from "./fake-resolver";
+import { FAKE_VERDICT } from "../resolver/fake-resolver";
 import { createPortalStore, type PortalStore } from "./store";
 
 // Needs `docker compose up` and `pnpm db:migrate`. Run with `pnpm test:integration`.

@@ -1,8 +1,8 @@
 import type { WriteEffects } from "@incident-resolver/agents";
 import type { FastifyBaseLogger } from "fastify";
+import type { TimelineWriter } from "../timeline/timeline";
 import { type ApprovalStore, settledProposal } from "./approvals";
 import type { DataFixRunner } from "./data-fix";
-import type { TimelineWriter } from "./timeline";
 
 export type WriteEffectsOptions = {
   approvals: ApprovalStore;

@@ -1,37 +1,24 @@
 import { createCohereProviders, createKnowledgeStore } from "@incident-resolver/mcp-incidents";
-import {
-  allowedDecisions,
-  type Config,
-  type Db,
-  type Decision,
-  formatIssues,
-  isApprovalAction,
-  manualResolutionSchema,
-  messageOf,
-  newTicketSchema,
-  reviewerDecisionSchema,
-} from "@incident-resolver/shared";
+import type { Config, Db } from "@incident-resolver/shared";
 import Fastify, { type FastifyBaseLogger, type FastifyInstance } from "fastify";
-import { z } from "zod";
-import { type ApprovalRecord, createApprovalStore } from "./approvals";
-import { createTicketEventBus } from "./bus";
-import { createDataFixRunner } from "./data-fix";
-import { createDemo, type Demo } from "./demo";
-import { createIncidentWriter, type IncidentWriter, noIncidents } from "./incidents";
-import type { TicketResolver } from "./resolver";
-import { createTicketRunner } from "./runner";
-import { noScores, type ScoreWriter } from "./scores";
-import {
-  formatSseFrame,
-  lastEventIdOf,
-  SSE_HEADERS,
-  SSE_KEEP_ALIVE,
-  SSE_KEEP_ALIVE_MS,
-} from "./sse";
-import { createPortalStore } from "./store";
-import { createTimelineWriter, type TimelineEntry } from "./timeline";
-import { servePortalWeb } from "./web";
-import { createWriteEffects } from "./write-effects";
+import { type ApprovalStore, createApprovalStore } from "./approvals/approvals";
+import { createDataFixRunner } from "./approvals/data-fix";
+import { createWriteEffects } from "./approvals/write-effects";
+import { createPortalStore, type PortalStore } from "./db/store";
+import { createDemo, type Demo } from "./demo/demo";
+import type { TicketResolver } from "./resolver/resolver";
+import { approvalRoutes } from "./routes/approvals";
+import { demoRoutes } from "./routes/demo";
+import { eventRoutes } from "./routes/events";
+import { reporterRoutes } from "./routes/reporters";
+import { systemRoutes } from "./routes/system";
+import { ticketRoutes } from "./routes/tickets";
+import { noScores, type ScoreWriter } from "./telemetry/scores";
+import { createIncidentWriter, type IncidentWriter, noIncidents } from "./tickets/incidents";
+import { createTicketRunner, type TicketRunner } from "./tickets/runner";
+import { createTicketEventBus, type TicketEventBus } from "./timeline/bus";
+import { createTimelineWriter } from "./timeline/timeline";
+import { servePortalWeb } from "./web/web";
 
 export type PortalApiOptions = {
   db: Db;
@@ -63,8 +50,18 @@ export type PortalApiOptions = {
   webDistDir?: string;
 };
 
-const ticketIdSchema = z.object({ id: z.uuid() });
-const reporterSchema = z.object({ email: z.email() });
+/** What the route plugins share: built once per portal, after the options are resolved. */
+export type PortalServices = {
+  config: Config;
+  resolver: TicketResolver;
+  demo: Demo;
+  store: PortalStore;
+  bus: TicketEventBus;
+  approvals: ApprovalStore;
+  runner: TicketRunner;
+  /** Every open timeline stream, so shutting the server down does not wait on them. */
+  openStreams: Set<() => void>;
+};
 
 type KnowledgeWriterOptions = {
   db: Db;
@@ -94,35 +91,9 @@ function knowledgeWriter({
 }
 
 /**
- * An approval as the portal serves it. The snapshot of changed rows stays behind: it exists so
- * a person with database access can undo a fix, and it is the one thing here that was never
- * masked, since a rollback needs the rows as they truly were.
- */
-function approvalBody(approval: ApprovalRecord) {
-  return {
-    id: approval.id,
-    run: approval.run,
-    action: approval.action,
-    allowedDecisions: isApprovalAction(approval.action)
-      ? allowedDecisions[approval.action]
-      : ([] as readonly Decision[]),
-    proposal: approval.proposal,
-    preview: approval.preview,
-    decision: approval.decision,
-    editedProposal: approval.editedProposal,
-    reason: approval.reason,
-    result: approval.result,
-    createdAt: approval.createdAt,
-    decidedAt: approval.decidedAt,
-    executedAt: approval.executedAt,
-  };
-}
-
-/**
  * The portal's HTTP surface: Tickets in from customers, testers and Sentinel, their live
- * timelines out over SSE, and the Reporter's own Tickets and Replies for the storefront.
- * Creating a Ticket starts its run, so a client can be watching the stream before the first
- * entry lands and still see everything: the stream always replays what it missed.
+ * timelines out over SSE, and the Reporter's own Tickets and Replies for the storefront. Each
+ * area's routes are a plugin under `routes/`.
  */
 export function createPortalApi(options: PortalApiOptions): FastifyInstance {
   const { logger = false, apiPrefix = "", webDistDir } = options;
@@ -134,7 +105,10 @@ export function createPortalApi(options: PortalApiOptions): FastifyInstance {
   return app;
 }
 
-/** The routes themselves, as a plugin so `createPortalApi` can mount them under a prefix. */
+/**
+ * Builds the services the routes share and registers every route plugin, as one plugin so
+ * `createPortalApi` can mount them all under a prefix.
+ */
 async function portalRoutes(
   app: FastifyInstance,
   {
@@ -170,7 +144,6 @@ async function portalRoutes(
     runTimeoutMs: config.runTimeoutMs,
     log: app.log,
   });
-  // Every open timeline stream, so shutting the server down does not wait on them.
   const openStreams = new Set<() => void>();
   app.addHook("onClose", async () => {
     for (const close of [...openStreams]) close();
@@ -180,231 +153,20 @@ async function portalRoutes(
     await scores.flush();
   });
 
-  app.get("/health", async () => ({ status: "ok", resolver: resolver.name }));
-
-  /**
-   * What portal-web needs from the portal's own configuration: the two observability tools
-   * a Ticket links out to. Serving them keeps the web app free of a build-time environment.
-   */
-  app.get("/config", async () => ({
-    resolver: resolver.name,
-    grafanaUrl: config.infra.grafanaUrl,
-    langfuseBaseUrl: config.infra.langfuseBaseUrl,
-  }));
-
-  /**
-   * The two buttons on the portal's hidden Demo panel, and the only routes here that exist
-   * for a rehearsal rather than for the product. Traffic is relayed to ShopLite, status and
-   * all, so a burst already running comes back worded as ShopLite worded it.
-   */
-  app.post("/demo/simulate-traffic", async (request, reply) => {
-    try {
-      const answer = await demo.simulateTraffic(request.body ?? {});
-      return reply.code(answer.status).send(answer.body);
-    } catch (error) {
-      app.log.error({ err: error }, "Could not reach ShopLite to simulate traffic");
-      return reply.code(502).send({ error: "Bad Gateway", message: messageOf(error) });
-    }
-  });
-
-  /**
-   * Puts everything back: ShopLite reseeded, Tickets and their timelines, approvals,
-   * checkpoints and Workspaces cleared, Incidents kept. It refuses while a Ticket is still
-   * running, since deleting a Ticket out from under its own run leaves the run writing to
-   * something that is not there.
-   */
-  app.post("/demo/reset", async (_request, reply) => {
-    const running = runner.busy();
-    if (running > 0) {
-      return reply.code(409).send({
-        error: "Conflict",
-        message: `${running} ${running === 1 ? "Ticket is" : "Tickets are"} still running. Wait for them to close, then reset.`,
-      });
-    }
-    const report = await demo.reset();
-    return reply.code(report.ok ? 200 : 500).send(report);
-  });
-
-  app.post("/tickets", async (request, reply) => {
-    const parsed = newTicketSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: "Bad Request", message: formatIssues(parsed.error) });
-    }
-    // A Sentinel detection that matches a fingerprint already open joins that Ticket: the
-    // same spike seen twice is one problem, and answering 200 tells Sentinel which one.
-    const { ticket, created } = await store.createTicket(parsed.data);
-    if (!created) return reply.code(200).send(ticket);
-    runner.start(ticket);
-    return reply.code(201).send(ticket);
-  });
-
-  app.get("/tickets", async () => ({ tickets: await store.listTickets() }));
-
-  app.get("/tickets/:id", async (request, reply) => {
-    const params = ticketIdSchema.safeParse(request.params);
-    if (!params.success) return reply.code(404).send({ error: "Not Found" });
-    const ticket = await store.getTicket(params.data.id);
-    if (!ticket) return reply.code(404).send({ error: "Not Found" });
-    return ticket;
-  });
-
-  /**
-   * The Proposals this Ticket has raised, newest first, and what became of each. The card the
-   * Reviewer decides on is drawn from the newest undecided one.
-   */
-  app.get("/tickets/:id/approvals", async (request, reply) => {
-    const params = ticketIdSchema.safeParse(request.params);
-    if (!params.success) return reply.code(404).send({ error: "Not Found" });
-    const ticket = await store.getTicket(params.data.id);
-    if (!ticket) return reply.code(404).send({ error: "Not Found" });
-    return { approvals: (await approvals.forTicket(ticket.id)).map(approvalBody) };
-  });
-
-  /**
-   * A Reviewer's Decision on the Proposal a Ticket is waiting on. Recording it carries the run
-   * on in the background, so this answers as soon as the Decision is safely written; what the
-   * run then does arrives on the timeline like everything else.
-   */
-  app.post("/tickets/:id/decision", async (request, reply) => {
-    const params = ticketIdSchema.safeParse(request.params);
-    if (!params.success) return reply.code(404).send({ error: "Not Found" });
-    const ticket = await store.getTicket(params.data.id);
-    if (!ticket) return reply.code(404).send({ error: "Not Found" });
-
-    const answer = reviewerDecisionSchema.safeParse(request.body);
-    if (!answer.success) {
-      return reply.code(400).send({ error: "Bad Request", message: formatIssues(answer.error) });
-    }
-    const result = await runner.decide(ticket, answer.data);
-    if (!result.ok) {
-      const error = result.status === 400 ? "Bad Request" : "Conflict";
-      return reply.code(result.status).send({ error, message: result.message });
-    }
-    return reply.code(202).send({ approval: approvalBody(result.approval) });
-  });
-
-  /**
-   * How a Reviewer finishes an escalated Ticket: the root cause, what fixed it, and the Reply
-   * the Reporter reads in place of the holding message. Submitting it writes the Incident, so
-   * the knowledge base learns from the Tickets the Resolver could not finish as well as from
-   * the ones it could.
-   */
-  app.post("/tickets/:id/resolution", async (request, reply) => {
-    const params = ticketIdSchema.safeParse(request.params);
-    if (!params.success) return reply.code(404).send({ error: "Not Found" });
-    const ticket = await store.getTicket(params.data.id);
-    if (!ticket) return reply.code(404).send({ error: "Not Found" });
-
-    const written = manualResolutionSchema.safeParse(request.body);
-    if (!written.success) {
-      return reply.code(400).send({ error: "Bad Request", message: formatIssues(written.error) });
-    }
-    const result = await runner.resolve(ticket, written.data);
-    if (!result.ok) {
-      return reply.code(result.status).send({ error: "Conflict", message: result.message });
-    }
-    return result.ticket;
-  });
-
-  /**
-   * Runs a closed Ticket again. The new run gets the next run number and its own thread, so
-   * nothing it does can reach the checkpoint the last one left; the Timeline keeps both,
-   * labelled by run. This answers as soon as the Ticket is reopened, and what the run then
-   * does arrives on the timeline like everything else.
-   */
-  app.post("/tickets/:id/rerun", async (request, reply) => {
-    const params = ticketIdSchema.safeParse(request.params);
-    if (!params.success) return reply.code(404).send({ error: "Not Found" });
-    const ticket = await store.getTicket(params.data.id);
-    if (!ticket) return reply.code(404).send({ error: "Not Found" });
-
-    const result = await runner.rerun(ticket);
-    if (!result.ok) {
-      return reply.code(result.status).send({ error: "Conflict", message: result.message });
-    }
-    return reply.code(202).send(result.ticket);
-  });
-
-  /** What the storefront's "My tickets" page reads: one Reporter's Tickets and their Replies. */
-  app.get("/reporters/:email/tickets", async (request, reply) => {
-    const params = reporterSchema.safeParse(request.params);
-    if (!params.success) {
-      return reply.code(400).send({ error: "Bad Request", message: formatIssues(params.error) });
-    }
-    const found = await store.ticketsForReporter(params.data.email);
-    return {
-      tickets: found.map((ticket) => ({
-        id: ticket.id,
-        title: ticket.title,
-        body: ticket.body,
-        traceId: ticket.traceId,
-        status: ticket.status,
-        outcome: ticket.outcome,
-        reply: ticket.reply,
-        createdAt: ticket.createdAt,
-        closedAt: ticket.closedAt,
-      })),
-    };
-  });
-
-  /**
-   * The live timeline. A client that reconnects sends the id of the last entry it saw, in
-   * the `Last-Event-ID` header or the `lastEventId` query, and gets everything after it
-   * before the stream goes live. The connection stays open across the close of the Ticket,
-   * so a re-run keeps streaming to the same watcher.
-   */
-  app.get("/tickets/:id/events", async (request, reply) => {
-    const params = ticketIdSchema.safeParse(request.params);
-    if (!params.success) return reply.code(404).send({ error: "Not Found" });
-    const ticket = await store.getTicket(params.data.id);
-    if (!ticket) return reply.code(404).send({ error: "Not Found" });
-
-    const query = z.object({ lastEventId: z.string().optional() }).safeParse(request.query);
-    let cursor = lastEventIdOf(
-      request.headers["last-event-id"],
-      query.success ? query.data.lastEventId : undefined,
-    );
-
-    reply.hijack();
-    const stream = reply.raw;
-    stream.writeHead(200, SSE_HEADERS);
-
-    const send = (entry: TimelineEntry) => {
-      if (entry.id <= cursor) return;
-      cursor = entry.id;
-      stream.write(formatSseFrame(entry));
-    };
-
-    // Subscribing before the catch-up read means an entry written during the read is held
-    // rather than lost; `send` then drops the ones the read already covered.
-    const live: TimelineEntry[] = [];
-    let replaying = true;
-    const unsubscribe = bus.subscribe(ticket.id, (entry) => {
-      if (replaying) live.push(entry);
-      else send(entry);
-    });
-
-    const keepAlive = setInterval(() => stream.write(SSE_KEEP_ALIVE), SSE_KEEP_ALIVE_MS);
-    const release = () => {
-      clearInterval(keepAlive);
-      unsubscribe();
-      openStreams.delete(close);
-    };
-    const close = () => {
-      release();
-      stream.end();
-    };
-    openStreams.add(close);
-    // The client hung up: let go of the subscription, but leave the socket to Node.
-    request.raw.on("close", release);
-
-    try {
-      for (const entry of await store.eventsAfter(ticket.id, cursor)) send(entry);
-      replaying = false;
-      for (const entry of live) send(entry);
-    } catch (error) {
-      app.log.error({ ticketId: ticket.id, err: error }, "Could not catch a timeline up");
-      close();
-    }
-  });
+  const services: PortalServices = {
+    config,
+    resolver,
+    demo,
+    store,
+    bus,
+    approvals,
+    runner,
+    openStreams,
+  };
+  app.register(systemRoutes, services);
+  app.register(demoRoutes, services);
+  app.register(ticketRoutes, services);
+  app.register(approvalRoutes, services);
+  app.register(reporterRoutes, services);
+  app.register(eventRoutes, services);
 }

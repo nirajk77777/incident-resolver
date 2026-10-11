@@ -11,12 +11,12 @@ import {
 import { inArray } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { Demo } from "./demo";
-import { createFakeResolver, FAKE_VERDICT } from "./fake-resolver";
-import { type IncidentWriter, noIncidents } from "./incidents";
-import type { ResolverEvent, TicketResolver } from "./resolver";
+import type { TicketRecord } from "./db/store";
+import type { Demo } from "./demo/demo";
+import { createFakeResolver, FAKE_VERDICT } from "./resolver/fake-resolver";
+import type { ResolverEvent, TicketResolver } from "./resolver/resolver";
 import { createPortalApi, type PortalApiOptions } from "./server";
-import type { TicketRecord } from "./store";
+import { type IncidentWriter, noIncidents } from "./tickets/incidents";
 
 // Needs `docker compose up` and `pnpm db:migrate`. Run with `pnpm test:integration`.
 //

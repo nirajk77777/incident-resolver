@@ -1,7 +1,7 @@
 import { createDb, getConfig } from "@incident-resolver/shared";
-import { resolverFor } from "./resolver";
-import { createScoreWriter } from "./scores";
+import { resolverFor } from "./resolver/resolver";
 import { createPortalApi } from "./server";
+import { createScoreWriter } from "./telemetry/scores";
 
 const config = getConfig();
 const db = createDb(config.infra.databaseUrl);

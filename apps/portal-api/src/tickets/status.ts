@@ -1,5 +1,5 @@
 import type { TicketStatus } from "@incident-resolver/shared";
-import type { ResolverEvent } from "./resolver";
+import type { ResolverEvent } from "../resolver/resolver";
 
 /**
  * The subagent whose start means Triage, matching `TRIAGE` in `@incident-resolver/agents`.

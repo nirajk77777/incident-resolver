@@ -9,7 +9,7 @@ import {
   type Verdict,
 } from "@incident-resolver/shared";
 import type { FastifyBaseLogger } from "fastify";
-import type { TicketRecord } from "./store";
+import type { TicketRecord } from "../db/store";
 
 /**
  * The Incident a closed Ticket leaves in the knowledge base, so the next similar Ticket finds

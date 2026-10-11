@@ -17,8 +17,13 @@ import {
   type Verdict,
 } from "@incident-resolver/shared";
 import type { FastifyBaseLogger } from "fastify";
-import type { ApprovalRecord, ApprovalStore, RecordedDecision } from "./approvals";
-import { settledProposal } from "./approvals";
+import type { ApprovalRecord, ApprovalStore, RecordedDecision } from "../approvals/approvals";
+import { settledProposal } from "../approvals/approvals";
+import type { PortalStore, TicketRecord } from "../db/store";
+import type { ResolverDecision, ResolverEvent, TicketResolver } from "../resolver/resolver";
+import type { ScoreWriter } from "../telemetry/scores";
+import type { TimelineWriter } from "../timeline/timeline";
+import { timelineEntryFor } from "../timeline/timeline";
 import {
   type IncidentWriter,
   incidentFromResolution,
@@ -26,12 +31,7 @@ import {
   resolutionOf,
 } from "./incidents";
 import { withoutPullRequestLinks } from "./reply";
-import type { ResolverDecision, ResolverEvent, TicketResolver } from "./resolver";
-import type { ScoreWriter } from "./scores";
 import { nextStatus } from "./status";
-import type { PortalStore, TicketRecord } from "./store";
-import type { TimelineWriter } from "./timeline";
-import { timelineEntryFor } from "./timeline";
 
 export type TicketRunnerOptions = {
   store: PortalStore;

@@ -1,7 +1,7 @@
 import type { TicketEventType } from "@incident-resolver/shared";
+import type { PortalStore } from "../db/store";
+import type { TimelineResolverEvent } from "../resolver/resolver";
 import type { TicketEventBus } from "./bus";
-import type { TimelineResolverEvent } from "./resolver";
-import type { PortalStore } from "./store";
 
 /** A `portal.ticket_events` row as the timeline serves it. */
 export type TimelineEntry = {

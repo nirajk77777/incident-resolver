@@ -1,9 +1,9 @@
 import type { PullRequestRequest } from "@incident-resolver/agents";
 import type { FastifyBaseLogger } from "fastify";
 import { describe, expect, it } from "vitest";
+import type { TimelineWriter } from "../timeline/timeline";
 import type { ApprovalRecord, ApprovalStore } from "./approvals";
 import type { DataFixRunner } from "./data-fix";
-import type { TimelineWriter } from "./timeline";
 import { createWriteEffects } from "./write-effects";
 
 /**

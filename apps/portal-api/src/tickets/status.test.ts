@@ -1,6 +1,6 @@
 import type { Verdict } from "@incident-resolver/shared";
 import { describe, expect, it } from "vitest";
-import type { TimelineResolverEvent } from "./resolver";
+import type { TimelineResolverEvent } from "../resolver/resolver";
 import { nextStatus } from "./status";
 
 const verdict = {
