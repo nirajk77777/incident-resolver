@@ -1,7 +1,6 @@
 # Incident Resolver
 
-Autonomous support and incident agent. Read `PLAN.md` for the architecture, services, agents, and build phases.
-
+Autonomous support and incident agent.
 ## Agent skills
 
 ### Issue tracker
