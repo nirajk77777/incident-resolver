@@ -8,6 +8,7 @@
   },
   "scripts": {
     "resolve": "node --env-file-if-exists=../../.env --import tsx src/cli.ts",
+    "eval:resolver": "node --env-file-if-exists=../../.env --import tsx src/evals/resolver-experiment.ts",
     "prompts:sync": "node --env-file-if-exists=../../.env --import tsx scripts/prompts-sync.ts",
     "workspaces:clean": "node --env-file-if-exists=../../.env --import tsx scripts/workspaces-clean.ts",
     "typecheck": "tsc --noEmit"
