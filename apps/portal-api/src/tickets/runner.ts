@@ -119,95 +119,83 @@ export function createTicketRunner({
     await record(ticket.id, run, { type: "status", payload: { status } });
   }
 
-  /**
-  /**
-   * The write an Outcome claims and did not happen, or nothing when the Verdict is true.
-   *
-   * Two Outcomes assert a write. `data_fixed` says an approved statement changed rows, and
-   * `fix_proposed` says an approved pull request is open on GitHub. Both are recorded on the
-   * approval by the effect that made them, so the records are what happened; a Verdict that
-   * disagrees with them is not the story a Reporter is told.
-   */
-  async function unmadeWrite(
-    ticket: TicketRecord,
-    run: number,
-    outcome: Verdict["outcome"],
-  ): Promise<{ warning: string; rootCause: string; note: string; reason: string } | undefined> {
-    if (outcome === "data_fixed" && !(await approvals.dataFixApplied(ticket.id, run))) {
-      return {
-        warning: "A Verdict claimed a data fix that never ran",
-        rootCause:
-          "No approved data fix changed any rows, so this was escalated rather than closed as fixed.",
-        note: "The Verdict said the data was fixed, but no approved fix changed any rows.",
-        reason: "unverified_fix",
-      };
-    }
-    if (outcome === "fix_proposed" && !(await approvals.pullRequestOpened(ticket.id, run))) {
-      return {
-        warning: "A Verdict claimed a pull request that was never opened",
-        rootCause:
-          "No approved pull request was opened, so this was escalated rather than closed as a fix proposed.",
-        note: "The Verdict said a fix was proposed, but no approved pull request was opened.",
-        reason: "unopened_pull_request",
-      };
-    }
-    return undefined;
+  /** An internal note on the Timeline, saying why the portal changed what the run ended with. */
+  async function note(ticket: TicketRecord, run: number, text: string, reason: string) {
+    await record(ticket.id, run, { type: "message", payload: { text, reason } });
   }
 
   /**
-   * The Verdict carries the Outcome and the Reply that make a Ticket closed: one write. Four
-   * things the portal knows and the agent does not are settled here first.
-   *
-   * Confidence below the threshold escalates, whatever Outcome the Verdict claims. The rule
-   * lives here as well as in the agent package so it holds for every Resolver behind the seam:
-   * it is the portal that tells the Reporter how their Ticket ended.
-   *
-   * A Reply a Reviewer approved is what the Reporter reads, even if the Resolver then worded
-   * its Verdict differently, since the approved text is the one that was sent. An Outcome that
-   * claims a write is checked against the approval records, above. And the Reply that closes a
-   * customer Ticket carries no link to ShopLite's repository, whoever wrote it.
+   * The two Outcomes that claim a write, and how to check it happened. Each write is recorded
+   * on its approval by the effect that made it, so the records are the truth, not the Verdict.
    */
-  async function close(ticket: TicketRecord, run: number, verdict: Verdict): Promise<void> {
-    const settled = applyConfidencePolicy(verdict, confidenceThreshold);
-    if (settled.outcome !== verdict.outcome) {
-      await record(ticket.id, run, {
-        type: "message",
-        payload: {
-          text: belowThresholdReason(verdict, confidenceThreshold),
-          reason: "below_confidence_threshold",
-        },
-      });
+  const claimedWrites: Partial<
+    Record<
+      Verdict["outcome"],
+      {
+        happened: (ticketId: string, run: number) => Promise<boolean>;
+        reason: string;
+        /** On the Timeline, for the Reviewer. */
+        note: string;
+        /** On the closed Ticket, in place of the root cause the Verdict claimed. */
+        rootCause: string;
+      }
+    >
+  > = {
+    data_fixed: {
+      happened: (ticketId, run) => approvals.dataFixApplied(ticketId, run),
+      reason: "unverified_fix",
+      note: "The Verdict said the data was fixed, but no approved fix changed any rows.",
+      rootCause:
+        "No approved data fix changed any rows, so this was escalated rather than closed as fixed.",
+    },
+    fix_proposed: {
+      happened: (ticketId, run) => approvals.pullRequestOpened(ticketId, run),
+      reason: "unopened_pull_request",
+      note: "The Verdict said a fix was proposed, but no approved pull request was opened.",
+      rootCause:
+        "No approved pull request was opened, so this was escalated rather than closed as a fix proposed.",
+    },
+  };
+
+  /**
+   * The Verdict as the Ticket will close on it. The portal has the last word on four things,
+   * whichever Resolver is behind the seam, and notes on the Timeline each one it changed:
+   * confidence below the threshold escalates; a Reply a Reviewer approved is the one sent; an
+   * Outcome claiming a write that never happened escalates; and a customer Reply carries no
+   * pull request link, since that belongs on the Timeline (CONTEXT.md).
+   */
+  async function settle(ticket: TicketRecord, run: number, verdict: Verdict): Promise<Verdict> {
+    let closing = applyConfidencePolicy(verdict, confidenceThreshold);
+    if (closing.outcome !== verdict.outcome) {
+      const why = belowThresholdReason(verdict, confidenceThreshold);
+      await note(ticket, run, why, "below_confidence_threshold");
     }
-    const [approved, unmade] = await Promise.all([
-      approvals.approvedReply(ticket.id, run),
-      unmadeWrite(ticket, run, settled.outcome),
-    ]);
-    let closing = approved ? { ...settled, reply: approved } : settled;
-    if (unmade) {
-      log.warn({ ticketId: ticket.id, run }, unmade.warning);
-      closing = escalated(closing, unmade.rootCause);
-      await record(ticket.id, run, {
-        type: "message",
-        payload: { text: unmade.note, reason: unmade.reason },
-      });
+
+    const approvedReply = await approvals.approvedReply(ticket.id, run);
+    if (approvedReply) closing = { ...closing, reply: approvedReply };
+
+    const claim = claimedWrites[closing.outcome];
+    if (claim && !(await claim.happened(ticket.id, run))) {
+      log.warn({ ticketId: ticket.id, run }, claim.note);
+      closing = escalated(closing, claim.rootCause);
+      await note(ticket, run, claim.note, claim.reason);
     }
-    // Last word on the Reply, so whatever closes a customer Ticket carries no pull request
-    // link: not the Resolver's wording, not a Reviewer's rewording. The link is on the
-    // Timeline as an internal note, which is where the team picks it up (CONTEXT.md).
+
     if (ticket.source === "customer") {
       const cleaned = withoutPullRequestLinks(closing.reply);
       if (cleaned.removed) {
-        log.warn({ ticketId: ticket.id, run }, "A customer Reply carried a pull request link");
         closing = { ...closing, reply: cleaned.text };
-        await record(ticket.id, run, {
-          type: "message",
-          payload: {
-            text: "A pull request link was taken out of the Reply before it reached the Reporter.",
-            reason: "link_in_reply",
-          },
-        });
+        const text =
+          "A pull request link was taken out of the Reply before it reached the Reporter.";
+        await note(ticket, run, text, "link_in_reply");
       }
     }
+    return closing;
+  }
+
+  /** Closes the Ticket on its settled Verdict, scores it, and teaches the knowledge base. */
+  async function close(ticket: TicketRecord, run: number, verdict: Verdict): Promise<void> {
+    const closing = await settle(ticket, run, verdict);
     const closed = await store.closeTicket(ticket.id, closing, resolutionOf(closing));
     await record(ticket.id, run, { type: "status", payload: { status: "closed" } });
     scores.outcome(closed.langfuseTraceId, closing.outcome);
@@ -327,10 +315,7 @@ export function createTicketRunner({
   ): Promise<void> {
     if (status === "closed") return;
     try {
-      await record(ticket.id, runNumber, {
-        type: "message",
-        payload: { text: `The run failed: ${reason}`, reason: "agent_error" },
-      });
+      await note(ticket, runNumber, `The run failed: ${reason}`, "agent_error");
       await close(ticket, runNumber, failedVerdict(reason));
     } catch (error) {
       log.error({ ticketId: ticket.id, err: error }, "Could not escalate a failed run");

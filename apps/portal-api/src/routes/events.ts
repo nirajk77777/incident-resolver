@@ -1,7 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import type { PortalStore } from "../db/store";
 import { requireTicket } from "../http/ticket-param";
-import type { PortalServices } from "../server";
+import type { TicketEventBus } from "../timeline/bus";
 import {
   formatSseFrame,
   lastEventIdOf,
@@ -15,7 +16,16 @@ const eventsQuerySchema = z.object({ lastEventId: z.string().optional() });
 
 export async function eventRoutes(
   app: FastifyInstance,
-  { store, bus, openStreams }: PortalServices,
+  {
+    store,
+    bus,
+    openStreams,
+  }: {
+    store: PortalStore;
+    bus: TicketEventBus;
+    /** Every open timeline stream, so shutting the server down does not wait on them. */
+    openStreams: Set<() => void>;
+  },
 ): Promise<void> {
   /**
    * The live timeline. A client that reconnects sends the id of the last entry it saw, in

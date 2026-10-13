@@ -6,9 +6,10 @@ import {
   reviewerDecisionSchema,
 } from "@incident-resolver/shared";
 import type { FastifyInstance } from "fastify";
-import type { ApprovalRecord } from "../approvals/approvals";
+import type { ApprovalRecord, ApprovalStore } from "../approvals/approvals";
+import type { PortalStore } from "../db/store";
 import { requireTicket } from "../http/ticket-param";
-import type { PortalServices } from "../server";
+import type { TicketRunner } from "../tickets/runner";
 
 /**
  * An approval as the portal serves it. The snapshot of changed rows stays behind: it exists so
@@ -38,7 +39,11 @@ function approvalBody(approval: ApprovalRecord) {
 /** The approval gate: the Proposals a Ticket has raised, and the Reviewer's Decision on one. */
 export async function approvalRoutes(
   app: FastifyInstance,
-  { store, approvals, runner }: PortalServices,
+  {
+    store,
+    approvals,
+    runner,
+  }: { store: PortalStore; approvals: ApprovalStore; runner: TicketRunner },
 ): Promise<void> {
   /**
    * The Proposals this Ticket has raised, newest first, and what became of each. The card the

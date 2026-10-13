@@ -1,10 +1,10 @@
 import { createCohereProviders, createKnowledgeStore } from "@incident-resolver/mcp-incidents";
 import type { Config, Db } from "@incident-resolver/shared";
 import Fastify, { type FastifyBaseLogger, type FastifyInstance } from "fastify";
-import { type ApprovalStore, createApprovalStore } from "./approvals/approvals";
+import { createApprovalStore } from "./approvals/approvals";
 import { createDataFixRunner } from "./approvals/data-fix";
 import { createWriteEffects } from "./approvals/write-effects";
-import { createPortalStore, type PortalStore } from "./db/store";
+import { createPortalStore } from "./db/store";
 import { createDemo, type Demo } from "./demo/demo";
 import type { TicketResolver } from "./resolver/resolver";
 import { approvalRoutes } from "./routes/approvals";
@@ -15,8 +15,8 @@ import { systemRoutes } from "./routes/system";
 import { ticketRoutes } from "./routes/tickets";
 import { noScores, type ScoreWriter } from "./telemetry/scores";
 import { createIncidentWriter, type IncidentWriter, noIncidents } from "./tickets/incidents";
-import { createTicketRunner, type TicketRunner } from "./tickets/runner";
-import { createTicketEventBus, type TicketEventBus } from "./timeline/bus";
+import { createTicketRunner } from "./tickets/runner";
+import { createTicketEventBus } from "./timeline/bus";
 import { createTimelineWriter } from "./timeline/timeline";
 import { servePortalWeb } from "./web/web";
 
@@ -48,19 +48,6 @@ export type PortalApiOptions = {
   apiPrefix?: string;
   /** Serve the built portal-web from here too. Omitted and this process is the API alone. */
   webDistDir?: string;
-};
-
-/** What the route plugins share: built once per portal, after the options are resolved. */
-export type PortalServices = {
-  config: Config;
-  resolver: TicketResolver;
-  demo: Demo;
-  store: PortalStore;
-  bus: TicketEventBus;
-  approvals: ApprovalStore;
-  runner: TicketRunner;
-  /** Every open timeline stream, so shutting the server down does not wait on them. */
-  openStreams: Set<() => void>;
 };
 
 type KnowledgeWriterOptions = {
@@ -144,6 +131,7 @@ async function portalRoutes(
     runTimeoutMs: config.runTimeoutMs,
     log: app.log,
   });
+  // Every open timeline stream, so shutting the server down does not wait on them.
   const openStreams = new Set<() => void>();
   app.addHook("onClose", async () => {
     for (const close of [...openStreams]) close();
@@ -153,20 +141,15 @@ async function portalRoutes(
     await scores.flush();
   });
 
-  const services: PortalServices = {
-    config,
-    resolver,
-    demo,
-    store,
-    bus,
-    approvals,
-    runner,
-    openStreams,
-  };
-  app.register(systemRoutes, services);
-  app.register(demoRoutes, services);
-  app.register(ticketRoutes, services);
-  app.register(approvalRoutes, services);
-  app.register(reporterRoutes, services);
-  app.register(eventRoutes, services);
+  // Each area's routes get only what they use.
+  app.register(systemRoutes, {
+    resolverName: resolver.name,
+    grafanaUrl: config.infra.grafanaUrl,
+    langfuseBaseUrl: config.infra.langfuseBaseUrl,
+  });
+  app.register(demoRoutes, { demo, runner });
+  app.register(ticketRoutes, { store, runner });
+  app.register(approvalRoutes, { store, approvals, runner });
+  app.register(reporterRoutes, { store });
+  app.register(eventRoutes, { store, bus, openStreams });
 }

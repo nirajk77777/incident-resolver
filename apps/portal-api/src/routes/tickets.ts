@@ -1,7 +1,8 @@
 import { formatIssues, manualResolutionSchema, newTicketSchema } from "@incident-resolver/shared";
 import type { FastifyInstance } from "fastify";
+import type { PortalStore } from "../db/store";
 import { requireTicket } from "../http/ticket-param";
-import type { PortalServices } from "../server";
+import type { TicketRunner } from "../tickets/runner";
 
 /**
  * Tickets in from customers, testers and Sentinel, and the two ways a person moves one on
@@ -9,7 +10,7 @@ import type { PortalServices } from "../server";
  */
 export async function ticketRoutes(
   app: FastifyInstance,
-  { store, runner }: PortalServices,
+  { store, runner }: { store: PortalStore; runner: TicketRunner },
 ): Promise<void> {
   /**
    * Creating a Ticket starts its run, so a client can be watching the stream before the first

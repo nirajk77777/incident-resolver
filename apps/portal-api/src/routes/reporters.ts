@@ -1,14 +1,14 @@
 import { formatIssues } from "@incident-resolver/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import type { PortalServices } from "../server";
+import type { PortalStore } from "../db/store";
 
 const reporterSchema = z.object({ email: z.email() });
 
 /** What the storefront's "My tickets" page reads: one Reporter's Tickets and their Replies. */
 export async function reporterRoutes(
   app: FastifyInstance,
-  { store }: PortalServices,
+  { store }: { store: PortalStore },
 ): Promise<void> {
   app.get("/reporters/:email/tickets", async (request, reply) => {
     const params = reporterSchema.safeParse(request.params);

@@ -1,6 +1,7 @@
 import { messageOf } from "@incident-resolver/shared";
 import type { FastifyInstance } from "fastify";
-import type { PortalServices } from "../server";
+import type { Demo } from "../demo/demo";
+import type { TicketRunner } from "../tickets/runner";
 
 /**
  * The two buttons on the portal's hidden Demo panel, and the only routes here that exist
@@ -8,7 +9,7 @@ import type { PortalServices } from "../server";
  */
 export async function demoRoutes(
   app: FastifyInstance,
-  { demo, runner }: PortalServices,
+  { demo, runner }: { demo: Demo; runner: TicketRunner },
 ): Promise<void> {
   /**
    * Traffic is relayed to ShopLite, status and all, so a burst already running comes back
