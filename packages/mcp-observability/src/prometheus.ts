@@ -33,8 +33,19 @@ export function checkoutErrorsQuery(job: string, window: string): string {
 }
 
 function requestCounter(job: string, route?: string): string {
-  const routeMatcher = route === undefined ? "" : `, http_route="${escapeLabelValue(route)}"`;
-  return `http_server_request_duration_seconds_count{job="${escapeLabelValue(job)}"${routeMatcher}}`;
+  const matcher = route === undefined ? "" : `, ${routeMatcher(route)}`;
+  return `http_server_request_duration_seconds_count{job="${escapeLabelValue(job)}"${matcher}}`;
+}
+
+/**
+ * A route as recorded, with or without the /api prefix. A deployed ShopLite serves its routes
+ * under /api and a local one at the root, and the agent names a route either way, so an exact
+ * match would find nothing on one of the two and report a route nobody called.
+ */
+function routeMatcher(route: string): string {
+  const bare = route.replace(/^\/api(?=\/|$)/, "") || "/";
+  const pattern = `(/api)?${bare.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`;
+  return `http_route=~"${escapeLabelValue(pattern)}"`;
 }
 
 function countOverWindow(counter: string, window: string): string {

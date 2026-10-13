@@ -1,5 +1,5 @@
+import type { Reporter } from "@incident-resolver/shared";
 import type { Pool } from "pg";
-import type { Reporter } from "./reporter";
 import { tenantTableList } from "./sql-guard";
 
 export type ColumnInfo = {

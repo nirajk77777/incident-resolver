@@ -5,6 +5,7 @@ export * from "./demo";
 export * from "./errors";
 export * from "./proposal";
 export * from "./redact";
+export * from "./reporter";
 export * from "./resolution";
 export * from "./ticket";
 export * from "./url";

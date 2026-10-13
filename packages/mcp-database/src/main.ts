@@ -1,8 +1,7 @@
-import { messageOf } from "@incident-resolver/shared";
+import { messageOf, resolveReporter } from "@incident-resolver/shared";
 import { getConfig } from "@incident-resolver/shared/config";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { Pool } from "pg";
-import { resolveReporter } from "./reporter";
 import { createDatabaseServer } from "./server";
 
 /**

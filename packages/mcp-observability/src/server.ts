@@ -34,7 +34,28 @@ export type ObservabilityServerOptions = {
   lineCap: number;
   /** Present for customer Tickets: this email stays unmasked in log lines. */
   reporterEmail?: string | undefined;
+  /**
+   * The reporter's ShopLite customer id, when it could be looked up. The logs name a customer
+   * by id in the request url and never by email, so the tools tell the agent to search for it.
+   */
+  reporterCustomerId?: string | undefined;
 };
+
+/**
+ * What ShopLite writes, so a search asks for something the lines can contain. Every request
+ * logs `incoming request` with req_url, req_method and reqId, then `request completed` with
+ * res_statusCode, responseTime and the same reqId, and both carry the trace id. Checkout adds
+ * its own lines with customerId, cartId and orderId. Emails, product names and table names are
+ * never in them.
+ */
+const logShape =
+  'ShopLite logs each request as two lines: "incoming request" with req_url (which holds the ' +
+  'customer, product, and order ids of the path), req_method and reqId, then "request completed" ' +
+  "with res_statusCode, responseTime and the same reqId. Both carry the trace_id. Checkout adds lines " +
+  'such as "payment declined by gateway" and "checkout completed" with customerId, cartId and ' +
+  "orderId. Emails, product names, table names and Ticket ids never appear in a line, so search for a " +
+  "path such as /cart/items or /checkout, or for a customer, product, cart, or order id. Routes are " +
+  "served under /api on a deployed ShopLite, so req_url reads /api/customers/<id>/cart.";
 
 /**
  * How many lines a text search reads before matching them here. Well under Loki's default
@@ -107,8 +128,15 @@ const traceIdSchema = z
 
 /** Builds the `mcp-observability` server. Connect it to a transport to serve. */
 export function createObservabilityServer(options: ObservabilityServerOptions): McpServer {
-  const { loki, tempo, prometheus, serviceName, lineCap, reporterEmail } = options;
+  const { loki, tempo, prometheus, serviceName, lineCap, reporterEmail, reporterCustomerId } =
+    options;
   const redacted = <T>(value: T): T => redact(value, { reporterEmail });
+  // Said on every tool that reads the logs, the way mcp-database names the reporter in its
+  // schema: the investigator runs beside the one that finds the customer id, not after it.
+  const reporterNote = reporterCustomerId
+    ? ` This is a customer Ticket from customer ${reporterCustomerId} (${reporterEmail}). Their ` +
+      `requests carry that id in req_url, so search for "${reporterCustomerId}" to find them.`
+    : "";
   const server = new McpServer({ name: "mcp-observability", version: "0.0.0" });
 
   /** Runs a tool body, turning a thrown error into a redacted failure result. */
@@ -155,7 +183,9 @@ export function createObservabilityServer(options: ObservabilityServerOptions): 
         "to see that level and above, a trace id to see every line of one request, or any combination. " +
         `Looks back ${defaultSince.text} by default, or ${defaultSince.traceId} when a trace id is given, ` +
         `unless \`since\` says otherwise. At most ${lineCap} lines come back, and card numbers and other ` +
-        "people's emails are masked. Each line carries its trace id, so a hit can be followed with get_trace.",
+        "people's emails are masked. Each line carries its trace id, so a hit can be followed with get_trace. " +
+        logShape +
+        reporterNote,
       inputSchema: {
         query: z
           .string()
@@ -226,13 +256,16 @@ export function createObservabilityServer(options: ObservabilityServerOptions): 
       description:
         "The share of one ShopLite route's responses that were errors over the window, from Prometheus. " +
         "errorRate counts every 4xx and 5xx, so a declined card (402) counts; serverErrorRate counts 5xx " +
-        "only. Routes are Fastify patterns such as /customers/:customerId/checkout. Counts are per status " +
-        "code so the two can be told apart.",
+        "only. Routes are Fastify patterns such as /customers/:customerId/checkout; a deployed ShopLite " +
+        "serves them under /api, and either form matches. Counts are per status code so the two can be " +
+        "told apart.",
       inputSchema: {
         route: z
           .string()
           .min(1)
-          .describe("The route pattern, such as /customers/:customerId/checkout"),
+          .describe(
+            "The route pattern, such as /customers/:customerId/checkout, with or without /api",
+          ),
         window: durationSchema
           .default("5m")
           .describe("How far back to count, such as 1m, 5m, or 1h"),
@@ -254,7 +287,9 @@ export function createObservabilityServer(options: ObservabilityServerOptions): 
         "the last `since` with their error rates, failed checkouts by reason, and the warn-and-above log " +
         "lines grouped by message with trace ids to follow. Start here for a Ticket with no trace id, or " +
         "to see whether one customer's problem is everyone's problem. A signal whose store is unreachable " +
-        "is named in `warnings` and the rest still comes back.",
+        "is named in `warnings` and the rest still comes back. Only routes with an error are listed: " +
+        "(unrouted) is requests no route matched, which are 404s and ShopLite's own /health checks." +
+        reporterNote,
       inputSchema: {
         since: durationSchema
           .default("15m")

@@ -1,4 +1,4 @@
-export { type Reporter, resolveReporter } from "./reporter";
+export { type Reporter, resolveReporter } from "@incident-resolver/shared";
 export { createDatabaseServer, type DatabaseServerOptions, type QueryResult } from "./server";
 export {
   checkDataFixSql,

@@ -7,9 +7,21 @@ const route = "/customers/:customerId/checkout";
 describe("errorRateQuery", () => {
   it("counts requests by status code as the counter's growth since the start of the window", () => {
     const counter =
-      'http_server_request_duration_seconds_count{job="shoplite-api", http_route="/customers/:customerId/checkout"}';
+      'http_server_request_duration_seconds_count{job="shoplite-api", http_route=~"(/api)?/customers/:customerId/checkout"}';
     expect(errorRateQuery({ job: "shoplite-api", route, window: "60s" })).toBe(
       `sum by (http_response_status_code) (clamp_min((${counter} - (${counter} offset 60s)) or ${counter}, 0))`,
+    );
+  });
+
+  it("matches a route with or without the /api prefix a deployed ShopLite serves it under", () => {
+    const bare = errorRateQuery({ job: "shoplite-api", route, window: "5m" });
+    const prefixed = errorRateQuery({ job: "shoplite-api", route: `/api${route}`, window: "5m" });
+    expect(prefixed).toBe(bare);
+  });
+
+  it("escapes regex characters in the route, so a route is matched as written", () => {
+    expect(errorRateQuery({ job: "shoplite-api", route: "/portal/*", window: "5m" })).toContain(
+      'http_route=~"(/api)?/portal/\\\\*"',
     );
   });
 
